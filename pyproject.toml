@@ -1,0 +1,14 @@
+[project]
+name = "notion-fitness-tracker"
+version = "0.1.0"
+description = "Sync fitness data from Hevy, Strava, and Garmin to Notion"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31.0",
+    "garminconnect>=0.2.25",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+hevy-sync = "scripts.hevy_sync:main"
+garmin-sync = "scripts.garmin_sync:main"
