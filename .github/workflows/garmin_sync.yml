@@ -67,4 +67,4 @@ jobs:
           args=""
           [ -n "${{ inputs.date }}" ] && args="$args --date ${{ inputs.date }}"
           [ "${{ inputs.verbose }}" = "true" ] && args="$args --verbose"
-          uv run python scripts/garmin_sync.py $args
+          uv run python -m scripts.garmin_sync $args

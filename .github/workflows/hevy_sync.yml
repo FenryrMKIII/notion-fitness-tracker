@@ -69,4 +69,4 @@ jobs:
           [ "${{ inputs.full }}" = "true" ] && args="$args --full"
           [ -n "${{ inputs.since }}" ] && args="$args --since ${{ inputs.since }}"
           [ "${{ inputs.verbose }}" = "true" ] && args="$args --verbose"
-          uv run python scripts/hevy_sync.py $args
+          uv run python -m scripts.hevy_sync $args

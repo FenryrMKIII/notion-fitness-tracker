@@ -67,4 +67,4 @@ jobs:
           args=""
           [ "${{ inputs.verbose }}" = "true" ] && args="$args --verbose"
           [ "${{ inputs.dry_run }}" = "true" ] && args="$args --dry-run"
-          uv run python scripts/update_dashboard.py $args
+          uv run python -m scripts.update_dashboard $args
