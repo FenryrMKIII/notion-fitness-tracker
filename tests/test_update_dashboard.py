@@ -12,6 +12,7 @@ from scripts.update_dashboard import (
     TrainingWeek,
     _color_for_value,
     _format_num,
+    _most_common,
     _safe_avg,
     build_callout,
     build_divider,
@@ -189,18 +190,18 @@ class TestExtractHealthProps:
         page: dict[str, Any] = {
             "properties": {
                 "Date": {"date": {"start": "2026-02-03"}},
-                "Sleep (hours)": {"number": 7.5},
-                "Sleep Score": {"number": 82},
+                "Sleep Duration (h)": {"number": 7.5},
+                "Sleep Quality": {"select": {"name": "GOOD"}},
                 "Resting HR": {"number": 55},
                 "Steps": {"number": 9200},
                 "Body Battery": {"number": 70},
-                "Weight (kg)": {"number": 75.3},
                 "Status": {"select": {"name": "Normal"}},
             }
         }
         props = extract_health_props(page)
         assert props["date"] == "2026-02-03"
         assert props["sleep_hours"] == 7.5
+        assert props["sleep_quality"] == "GOOD"
         assert props["resting_hr"] == 55.0
         assert props["status"] == "Normal"
 
@@ -208,6 +209,7 @@ class TestExtractHealthProps:
         page: dict[str, Any] = {"properties": {}}
         props = extract_health_props(page)
         assert props["sleep_hours"] is None
+        assert props["sleep_quality"] is None
         assert props["status"] is None
 
 
@@ -303,66 +305,79 @@ class TestCalculateTrainingWeek:
 # ---------------------------------------------------------------------------
 
 
+class TestMostCommon:
+    def test_single_value(self) -> None:
+        assert _most_common(["GOOD"]) == "GOOD"
+
+    def test_mode(self) -> None:
+        assert _most_common(["GOOD", "FAIR", "GOOD"]) == "GOOD"
+
+    def test_empty(self) -> None:
+        assert _most_common([]) == ""
+
+    def test_tie_returns_one(self) -> None:
+        result = _most_common(["GOOD", "FAIR"])
+        assert result in ("GOOD", "FAIR")
+
+
 class TestCalculateHealthWeek:
     def test_basic_averages(self) -> None:
         records = [
-            {"sleep_hours": 7.0, "sleep_score": 80, "resting_hr": 55,
-             "steps": 8000, "body_battery": 65, "weight_kg": 75.0, "status": "Normal"},
-            {"sleep_hours": 8.0, "sleep_score": 90, "resting_hr": 52,
-             "steps": 10000, "body_battery": 80, "weight_kg": 74.5, "status": "Normal"},
+            {"sleep_hours": 7.0, "sleep_quality": "GOOD", "resting_hr": 55,
+             "steps": 8000, "body_battery": 65, "status": "Normal"},
+            {"sleep_hours": 8.0, "sleep_quality": "EXCELLENT", "resting_hr": 52,
+             "steps": 10000, "body_battery": 80, "status": "Normal"},
         ]
         hw = calculate_health_week(records, "test")
         assert hw.entries == 2
         assert hw.avg_sleep_hours == 7.5
-        assert hw.avg_sleep_score == 85.0
+        assert hw.sleep_quality_mode in ("GOOD", "EXCELLENT")
         assert hw.avg_resting_hr == 53.5
         assert hw.avg_steps == 9000.0
         assert hw.avg_body_battery == 72.5
-        assert hw.weight_last == 74.5  # last entry
+
+    def test_sleep_quality_mode(self) -> None:
+        records = [
+            {"sleep_hours": 7.0, "sleep_quality": "GOOD", "resting_hr": None,
+             "steps": None, "body_battery": None, "status": None},
+            {"sleep_hours": 7.5, "sleep_quality": "GOOD", "resting_hr": None,
+             "steps": None, "body_battery": None, "status": None},
+            {"sleep_hours": 8.0, "sleep_quality": "EXCELLENT", "resting_hr": None,
+             "steps": None, "body_battery": None, "status": None},
+        ]
+        hw = calculate_health_week(records, "test")
+        assert hw.sleep_quality_mode == "GOOD"
 
     def test_empty_week(self) -> None:
         hw = calculate_health_week([], "empty")
         assert hw.entries == 0
         assert hw.avg_sleep_hours == 0.0
-        assert hw.weight_last is None
+        assert hw.sleep_quality_mode == ""
 
     def test_none_values_excluded(self) -> None:
         records = [
-            {"sleep_hours": 7.0, "sleep_score": None, "resting_hr": None,
-             "steps": None, "body_battery": None, "weight_kg": None, "status": None},
+            {"sleep_hours": 7.0, "sleep_quality": None, "resting_hr": None,
+             "steps": None, "body_battery": None, "status": None},
         ]
         hw = calculate_health_week(records, "test")
         assert hw.avg_sleep_hours == 7.0
-        assert hw.avg_sleep_score == 0.0  # no data
-        assert hw.weight_last is None
+        assert hw.sleep_quality_mode == ""
 
     def test_status_counts(self) -> None:
         records = [
-            {"sleep_hours": None, "sleep_score": None, "resting_hr": None,
-             "steps": None, "body_battery": None, "weight_kg": None, "status": "Sick"},
-            {"sleep_hours": None, "sleep_score": None, "resting_hr": None,
-             "steps": None, "body_battery": None, "weight_kg": None, "status": "Sick"},
-            {"sleep_hours": None, "sleep_score": None, "resting_hr": None,
-             "steps": None, "body_battery": None, "weight_kg": None, "status": "Injured"},
-            {"sleep_hours": None, "sleep_score": None, "resting_hr": None,
-             "steps": None, "body_battery": None, "weight_kg": None, "status": "Rest Day"},
+            {"sleep_hours": None, "sleep_quality": None, "resting_hr": None,
+             "steps": None, "body_battery": None, "status": "Sick"},
+            {"sleep_hours": None, "sleep_quality": None, "resting_hr": None,
+             "steps": None, "body_battery": None, "status": "Sick"},
+            {"sleep_hours": None, "sleep_quality": None, "resting_hr": None,
+             "steps": None, "body_battery": None, "status": "Injured"},
+            {"sleep_hours": None, "sleep_quality": None, "resting_hr": None,
+             "steps": None, "body_battery": None, "status": "Rest Day"},
         ]
         hw = calculate_health_week(records, "test")
         assert hw.sick_days == 2
         assert hw.injured_days == 1
         assert hw.rest_days == 1
-
-    def test_weight_uses_last(self) -> None:
-        records = [
-            {"sleep_hours": None, "sleep_score": None, "resting_hr": None,
-             "steps": None, "body_battery": None, "weight_kg": 80.0, "status": None},
-            {"sleep_hours": None, "sleep_score": None, "resting_hr": None,
-             "steps": None, "body_battery": None, "weight_kg": 79.5, "status": None},
-            {"sleep_hours": None, "sleep_score": None, "resting_hr": None,
-             "steps": None, "body_battery": None, "weight_kg": 79.0, "status": None},
-        ]
-        hw = calculate_health_week(records, "test")
-        assert hw.weight_last == 79.0
 
 
 # ---------------------------------------------------------------------------

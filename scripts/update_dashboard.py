@@ -30,12 +30,11 @@ TRAINING_DB_PROPERTIES = [
 ]
 HEALTH_DB_PROPERTIES = [
     "Date",
-    "Sleep (hours)",
-    "Sleep Score",
+    "Sleep Duration (h)",
+    "Sleep Quality",
     "Resting HR",
     "Steps",
     "Body Battery",
-    "Weight (kg)",
     "Status",
 ]
 
@@ -104,11 +103,10 @@ class HealthWeek:
 
     label: str = ""
     avg_sleep_hours: float = 0.0
-    avg_sleep_score: float = 0.0
+    sleep_quality_mode: str = ""
     avg_resting_hr: float = 0.0
     avg_steps: float = 0.0
     avg_body_battery: float = 0.0
-    weight_last: float | None = None
     sick_days: int = 0
     injured_days: int = 0
     rest_days: int = 0
@@ -222,12 +220,11 @@ def extract_health_props(page: dict[str, Any]) -> dict[str, Any]:
     props = page.get("properties", {})
     return {
         "date": _get_date(props.get("Date", {})),
-        "sleep_hours": _get_number(props.get("Sleep (hours)", {})),
-        "sleep_score": _get_number(props.get("Sleep Score", {})),
+        "sleep_hours": _get_number(props.get("Sleep Duration (h)", {})),
+        "sleep_quality": _get_select(props.get("Sleep Quality", {})),
         "resting_hr": _get_number(props.get("Resting HR", {})),
         "steps": _get_number(props.get("Steps", {})),
         "body_battery": _get_number(props.get("Body Battery", {})),
-        "weight_kg": _get_number(props.get("Weight (kg)", {})),
         "status": _get_select(props.get("Status", {})),
     }
 
@@ -296,31 +293,38 @@ def calculate_training_week(records: list[dict[str, Any]], label: str) -> Traini
     return tw
 
 
+def _most_common(values: list[str]) -> str:
+    """Return the most common value in a list, or empty string if empty."""
+    if not values:
+        return ""
+    counts: dict[str, int] = {}
+    for v in values:
+        counts[v] = counts.get(v, 0) + 1
+    return max(counts, key=lambda k: counts[k])
+
+
 def calculate_health_week(records: list[dict[str, Any]], label: str) -> HealthWeek:
     """Compute health metrics for one week's records."""
     hw = HealthWeek(label=label)
     hw.entries = len(records)
 
     sleep_hours: list[float] = []
-    sleep_scores: list[float] = []
+    sleep_qualities: list[str] = []
     resting_hrs: list[float] = []
     steps_vals: list[float] = []
     battery_vals: list[float] = []
-    last_weight: float | None = None
 
     for r in records:
         if r.get("sleep_hours") is not None:
             sleep_hours.append(float(r["sleep_hours"]))
-        if r.get("sleep_score") is not None:
-            sleep_scores.append(float(r["sleep_score"]))
+        if r.get("sleep_quality"):
+            sleep_qualities.append(str(r["sleep_quality"]))
         if r.get("resting_hr") is not None:
             resting_hrs.append(float(r["resting_hr"]))
         if r.get("steps") is not None:
             steps_vals.append(float(r["steps"]))
         if r.get("body_battery") is not None:
             battery_vals.append(float(r["body_battery"]))
-        if r.get("weight_kg") is not None:
-            last_weight = float(r["weight_kg"])
 
         status = r.get("status") or ""
         if status == "Sick":
@@ -331,11 +335,10 @@ def calculate_health_week(records: list[dict[str, Any]], label: str) -> HealthWe
             hw.rest_days += 1
 
     hw.avg_sleep_hours = _safe_avg(sleep_hours)
-    hw.avg_sleep_score = _safe_avg(sleep_scores)
+    hw.sleep_quality_mode = _most_common(sleep_qualities)
     hw.avg_resting_hr = _safe_avg(resting_hrs)
     hw.avg_steps = _safe_avg(steps_vals)
     hw.avg_body_battery = _safe_avg(battery_vals)
-    hw.weight_last = last_weight
 
     return hw
 
@@ -650,11 +653,10 @@ def build_health_table(
     headers = [
         "Week",
         "Sleep (h)",
-        "Sleep Score",
+        "Sleep Quality",
         "Resting HR",
         "Steps",
         "Body Battery",
-        "Weight (kg)",
         "Sick",
         "Injured",
         "Rest Days",
@@ -678,16 +680,15 @@ def build_health_table(
 
     for i, w in enumerate(weeks):
         is_current = i == 0
-        weight_str = _format_num(w.weight_last) if w.weight_last is not None else "\u2014"
+        quality_str = w.sleep_quality_mode or "\u2014"
         row = build_table_row(
             [
                 [build_text(w.label, bold=is_current)],
                 _cell(w.avg_sleep_hours, "avg_sleep_hours", is_current),
-                _cell(w.avg_sleep_score, "avg_sleep_score", is_current),
+                [build_text(quality_str)],
                 _cell(w.avg_resting_hr, "avg_resting_hr", is_current, higher=False),
                 _cell(w.avg_steps, "avg_steps", is_current),
                 _cell(w.avg_body_battery, "avg_body_battery", is_current),
-                [build_text(weight_str)],
                 [build_text(str(w.sick_days))],
                 [build_text(str(w.injured_days))],
                 [build_text(str(w.rest_days))],
@@ -825,7 +826,7 @@ def build_full_dashboard(
                         build_text("Health: ", bold=True),
                         build_text(
                             "Date, then any combination of Sleep, HR, Steps, "
-                            "Body Battery, Weight, Status."
+                            "Body Battery, Status."
                         ),
                     ]
                 ),
@@ -1067,12 +1068,12 @@ def main() -> None:
         )
     for hw in health_weeks:
         logger.info(
-            "Health %s: %.1fh sleep, %.0f HR, %.0f steps, %s kg",
+            "Health %s: %.1fh sleep (%s), %.0f HR, %.0f steps",
             hw.label,
             hw.avg_sleep_hours,
+            hw.sleep_quality_mode or "—",
             hw.avg_resting_hr,
             hw.avg_steps,
-            hw.weight_last or "—",
         )
 
     # Generate insights

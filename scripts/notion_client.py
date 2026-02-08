@@ -94,12 +94,18 @@ class NotionClient:
 
     def create_page(self, properties: dict[str, Any]) -> dict[str, Any]:
         """Create a page in the training sessions database."""
+        return self.create_page_in_db(self._db_id, properties)
+
+    def create_page_in_db(
+        self, db_id: str, properties: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Create a page in any Notion database."""
         self._rate_limit()
         resp = self.session.post(
             f"{NOTION_API_URL}/pages",
             headers=self._headers,
             json={
-                "parent": {"database_id": self._db_id},
+                "parent": {"database_id": db_id},
                 "properties": properties,
             },
             timeout=30,
@@ -107,6 +113,23 @@ class NotionClient:
         resp.raise_for_status()
         result: dict[str, Any] = resp.json()
         return result
+
+    def check_existing_in_db(self, db_id: str, external_id: str) -> bool:
+        """Return True if a page with this External ID already exists in any DB."""
+        self._rate_limit()
+        resp = self.session.post(
+            f"{NOTION_API_URL}/databases/{db_id}/query",
+            headers=self._headers,
+            json={
+                "filter": {
+                    "property": "External ID",
+                    "rich_text": {"equals": external_id},
+                }
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return len(resp.json().get("results", [])) > 0
 
     # ------------------------------------------------------------------
     # Generic API methods (used by dashboard updater, etc.)

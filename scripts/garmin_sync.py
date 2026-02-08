@@ -7,9 +7,8 @@ import os
 from datetime import date, timedelta
 from typing import Any
 
-import requests
 from dotenv import load_dotenv
-from garminconnect import Garmin, GarminConnectAuthenticationError
+from garminconnect import Garmin
 
 from scripts.notion_client import ConfigurationError, NotionClient
 
@@ -132,39 +131,167 @@ def sync_activities(
     return synced
 
 
-def sync_sleep_and_steps(client: Garmin, target_date: date) -> None:
-    """Fetch and log sleep/step data for *target_date*.
+# ---------------------------------------------------------------------------
+# Health data extraction (pure functions)
+# ---------------------------------------------------------------------------
 
-    TODO: This is currently a logging-only stub. To make it useful, build
-    Notion page properties from the data below and call notion.create_page().
+
+def extract_sleep_data(
+    sleep_data: dict[str, Any] | None,
+) -> tuple[float | None, str | None]:
+    """Extract sleep hours and quality from Garmin sleep data.
+
+    Returns (hours, quality) where quality is one of EXCELLENT/GOOD/FAIR/POOR.
     """
-    try:
-        sleep_data = client.get_sleep_data(target_date.isoformat())
-        steps_data = client.get_steps_data(target_date.isoformat())
-    except (requests.RequestException, GarminConnectAuthenticationError) as exc:
-        logger.warning("Could not fetch sleep/steps data: %s", exc)
+    if not sleep_data or not sleep_data.get("dailySleepDTO"):
+        return None, None
+    dto = sleep_data["dailySleepDTO"]
+    sleep_seconds = dto.get("sleepTimeSeconds", 0)
+    if sleep_seconds == 0:
+        return None, None
+    hours = round(sleep_seconds / 3600, 1)
+    quality = dto.get("sleepQualityType")
+    return hours, quality
+
+
+def extract_steps(steps_data: list[dict[str, Any]] | None) -> int | None:
+    """Extract total steps from Garmin steps data."""
+    if not steps_data:
+        return None
+    total = sum(entry.get("steps", 0) for entry in steps_data)
+    return total if total > 0 else None
+
+
+def extract_resting_hr(rhr_data: dict[str, Any] | None) -> int | None:
+    """Extract resting heart rate from Garmin RHR data."""
+    if not rhr_data:
+        return None
+    rhr = rhr_data.get("restingHeartRate")
+    if rhr is None:
+        return None
+    return int(rhr)
+
+
+def extract_body_battery(
+    battery_data: list[dict[str, Any]] | None,
+) -> int | None:
+    """Extract max body battery from Garmin body battery data."""
+    if not battery_data:
+        return None
+    charged = [
+        entry.get("charged", 0)
+        for entry in battery_data
+        if entry.get("charged") is not None
+    ]
+    return max(charged) if charged else None
+
+
+# ---------------------------------------------------------------------------
+# Health properties builder
+# ---------------------------------------------------------------------------
+
+
+def build_health_properties(
+    target_date: date,
+    sleep_hours: float | None,
+    sleep_quality: str | None,
+    steps: int | None,
+    resting_hr: int | None,
+    body_battery: int | None,
+) -> dict[str, Any]:
+    """Build Notion page properties for a Health Status Log entry."""
+    date_str = target_date.isoformat()
+    external_id = f"garmin-health-{date_str}"
+
+    properties: dict[str, Any] = {
+        "Date Label": {
+            "title": [{"text": {"content": f"Health Log — {date_str}"}}]
+        },
+        "Date": {"date": {"start": date_str}},
+        "External ID": {"rich_text": [{"text": {"content": external_id}}]},
+    }
+
+    if sleep_hours is not None:
+        properties["Sleep Duration (h)"] = {"number": sleep_hours}
+    if sleep_quality is not None:
+        properties["Sleep Quality"] = {"select": {"name": sleep_quality}}
+    if steps is not None:
+        properties["Steps"] = {"number": steps}
+    if resting_hr is not None:
+        properties["Resting HR"] = {"number": resting_hr}
+    if body_battery is not None:
+        properties["Body Battery"] = {"number": body_battery}
+
+    return properties
+
+
+# ---------------------------------------------------------------------------
+# Health sync
+# ---------------------------------------------------------------------------
+
+
+def sync_sleep_and_steps(
+    client: Garmin, notion: NotionClient, target_date: date
+) -> None:
+    """Fetch health data from Garmin and create a Health Status Log entry."""
+    health_db_id = os.environ.get("NOTION_HEALTH_DB_ID")
+    if not health_db_id:
+        logger.warning(
+            "NOTION_HEALTH_DB_ID not set — skipping health data sync"
+        )
         return
 
-    sleep_minutes = 0
-    sleep_quality = "Unknown"
-    if sleep_data and sleep_data.get("dailySleepDTO"):
-        dto = sleep_data["dailySleepDTO"]
-        sleep_seconds = dto.get("sleepTimeSeconds", 0)
-        sleep_minutes = round(sleep_seconds / 60)
-        sleep_quality = dto.get("sleepQualityType", "Unknown")
+    external_id = f"garmin-health-{target_date.isoformat()}"
+    if notion.check_existing_in_db(health_db_id, external_id):
+        logger.info("Health log for %s already exists, skipping", target_date)
+        return
 
-    total_steps = 0
-    if steps_data:
-        for entry in steps_data:
-            total_steps += entry.get("steps", 0)
+    # Fetch each endpoint independently
+    sleep_data: dict[str, Any] | None = None
+    try:
+        sleep_data = client.get_sleep_data(target_date.isoformat())
+    except Exception as exc:
+        logger.warning("Could not fetch sleep data: %s", exc)
+
+    steps_data: list[dict[str, Any]] | None = None
+    try:
+        steps_data = client.get_steps_data(target_date.isoformat())
+    except Exception as exc:
+        logger.warning("Could not fetch steps data: %s", exc)
+
+    rhr_data: dict[str, Any] | None = None
+    try:
+        rhr_data = client.get_rhr_day(target_date.isoformat())
+    except Exception as exc:
+        logger.warning("Could not fetch resting HR data: %s", exc)
+
+    battery_data: list[dict[str, Any]] | None = None
+    try:
+        battery_data = client.get_body_battery(target_date.isoformat())
+    except Exception as exc:
+        logger.warning("Could not fetch body battery data: %s", exc)
+
+    # Extract values
+    sleep_hours, sleep_quality = extract_sleep_data(sleep_data)
+    steps = extract_steps(steps_data)
+    resting_hr = extract_resting_hr(rhr_data)
+    body_battery = extract_body_battery(battery_data)
 
     logger.info(
-        "Date %s: Sleep=%d min (%s), Steps=%d",
+        "Date %s: Sleep=%.1fh (%s), Steps=%s, RHR=%s, Battery=%s",
         target_date,
-        sleep_minutes,
-        sleep_quality,
-        total_steps,
+        sleep_hours or 0,
+        sleep_quality or "N/A",
+        steps or "N/A",
+        resting_hr or "N/A",
+        body_battery or "N/A",
     )
+
+    properties = build_health_properties(
+        target_date, sleep_hours, sleep_quality, steps, resting_hr, body_battery
+    )
+    notion.create_page_in_db(health_db_id, properties)
+    logger.info("Created health log for %s", target_date)
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +328,7 @@ def main() -> None:
     logger.info("Syncing Garmin data for %s", target_date)
 
     synced = sync_activities(client, notion, target_date)
-    sync_sleep_and_steps(client, target_date)
+    sync_sleep_and_steps(client, notion, target_date)
 
     logger.info("Done: %d activities synced", synced)
 

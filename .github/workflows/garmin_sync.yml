@@ -36,6 +36,7 @@ jobs:
           [ -z "$GARMIN_PASSWORD" ] && missing="$missing GARMIN_PASSWORD"
           [ -z "$NOTION_API_KEY" ] && missing="$missing NOTION_API_KEY"
           [ -z "$NOTION_TRAINING_DB_ID" ] && missing="$missing NOTION_TRAINING_DB_ID"
+          [ -z "$NOTION_HEALTH_DB_ID" ] && missing="$missing NOTION_HEALTH_DB_ID"
           if [ -n "$missing" ]; then
             echo "::error::Missing required secrets:$missing"
             exit 1
@@ -45,6 +46,7 @@ jobs:
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_TRAINING_DB_ID: ${{ secrets.NOTION_TRAINING_DB_ID }}
+          NOTION_HEALTH_DB_ID: ${{ secrets.NOTION_HEALTH_DB_ID }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
@@ -63,6 +65,7 @@ jobs:
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_TRAINING_DB_ID: ${{ secrets.NOTION_TRAINING_DB_ID }}
+          NOTION_HEALTH_DB_ID: ${{ secrets.NOTION_HEALTH_DB_ID }}
         run: |
           args=""
           [ -n "${{ inputs.date }}" ] && args="$args --date ${{ inputs.date }}"
