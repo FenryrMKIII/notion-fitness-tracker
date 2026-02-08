@@ -4,81 +4,77 @@
 import argparse
 import logging
 import os
-import sys
-from datetime import datetime
+from datetime import date, datetime
+from typing import Any
 
 import requests
 from dotenv import load_dotenv
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-load_dotenv()
+from scripts.notion_client import ConfigurationError, NotionClient
 
 HEVY_API_URL = "https://api.hevyapp.com/v1"
-NOTION_API_URL = "https://api.notion.com/v1"
-NOTION_VERSION = "2022-06-28"
+NOTION_RICH_TEXT_MAX_LENGTH = 2000
 
 logger = logging.getLogger(__name__)
 
 
-def get_hevy_headers():
+# ---------------------------------------------------------------------------
+# Hevy API helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_hevy_session() -> requests.Session:
+    """Create a requests.Session with retry/backoff for Hevy API calls."""
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504],
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+def get_hevy_headers() -> dict[str, str]:
+    """Return Hevy API headers.  Raises ConfigurationError if the key is missing."""
     api_key = os.environ.get("HEVY_API_KEY")
     if not api_key:
-        logger.error("HEVY_API_KEY not set")
-        sys.exit(1)
+        raise ConfigurationError("HEVY_API_KEY environment variable is not set")
     return {"api-key": api_key}
 
 
-def get_notion_headers():
-    api_key = os.environ.get("NOTION_API_KEY")
-    if not api_key:
-        logger.error("NOTION_API_KEY not set")
-        sys.exit(1)
-    return {
-        "Authorization": f"Bearer {api_key}",
-        "Notion-Version": NOTION_VERSION,
-        "Content-Type": "application/json",
-    }
-
-
-def get_db_id():
-    db_id = os.environ.get("NOTION_TRAINING_DB_ID", "13d713283dd14cd89ba1eb7ac77db89f")
-    return db_id
-
-
-def fetch_hevy_workouts(page=1, page_size=10):
+def fetch_hevy_workouts(
+    session: requests.Session,
+    headers: dict[str, str],
+    page: int = 1,
+    page_size: int = 10,
+) -> dict[str, Any]:
     """Fetch workouts from Hevy API."""
-    resp = requests.get(
+    resp = session.get(
         f"{HEVY_API_URL}/workouts",
-        headers=get_hevy_headers(),
+        headers=headers,
         params={"page": page, "pageSize": page_size},
         timeout=30,
     )
     resp.raise_for_status()
-    return resp.json()
+    result: dict[str, Any] = resp.json()
+    return result
 
 
-def check_existing(external_id):
-    """Check if a workout with this External ID already exists in Notion."""
-    db_id = get_db_id()
-    resp = requests.post(
-        f"{NOTION_API_URL}/databases/{db_id}/query",
-        headers=get_notion_headers(),
-        json={
-            "filter": {
-                "property": "External ID",
-                "rich_text": {"equals": external_id},
-            }
-        },
-        timeout=30,
-    )
-    resp.raise_for_status()
-    return len(resp.json().get("results", [])) > 0
+# ---------------------------------------------------------------------------
+# Data formatting helpers
+# ---------------------------------------------------------------------------
 
 
-def format_exercise_details(exercises):
+def format_exercise_details(exercises: list[dict[str, Any]]) -> str:
     """Format exercises into a readable text summary."""
-    parts = []
+    parts: list[str] = []
     for ex in exercises:
-        sets_str = []
+        sets_str: list[str] = []
         for s in ex.get("sets", []):
             weight = s.get("weight_kg", 0) or 0
             reps = s.get("reps")
@@ -94,11 +90,12 @@ def format_exercise_details(exercises):
             else:
                 sets_str.append(f"{weight}kg")
 
-        parts.append(f"{ex['title']}: {', '.join(sets_str)}")
+        title = ex.get("title", "Unknown Exercise")
+        parts.append(f"{title}: {', '.join(sets_str)}")
     return " | ".join(parts)
 
 
-def calculate_volume(exercises):
+def calculate_volume(exercises: list[dict[str, Any]]) -> float:
     """Calculate total volume (weight x reps) across all exercises."""
     total = 0.0
     for ex in exercises:
@@ -109,83 +106,113 @@ def calculate_volume(exercises):
     return round(total, 1)
 
 
-def calculate_duration_min(start_time, end_time):
+def calculate_duration_min(start_time: str, end_time: str) -> int:
     """Calculate duration in minutes from ISO timestamps."""
-    fmt = "%Y-%m-%dT%H:%M:%S%z"
     start = datetime.fromisoformat(start_time)
     end = datetime.fromisoformat(end_time)
     return round((end - start).total_seconds() / 60)
 
 
-def create_notion_entry(workout):
+# ---------------------------------------------------------------------------
+# Notion sync
+# ---------------------------------------------------------------------------
+
+
+def create_notion_entry(
+    notion: NotionClient,
+    workout: dict[str, Any],
+) -> dict[str, Any]:
     """Create a Training Sessions entry in Notion for a Hevy workout."""
-    db_id = get_db_id()
-    exercises = workout.get("exercises", [])
-    start_time = workout["start_time"]
-    end_time = workout["end_time"]
+    exercises: list[dict[str, Any]] = workout.get("exercises", [])
+    start_time: str = workout.get("start_time", "")
+    end_time: str = workout.get("end_time", "")
     date_str = start_time[:10]
 
-    properties = {
-        "Name": {"title": [{"text": {"content": workout["title"]}}]},
+    properties: dict[str, Any] = {
+        "Name": {
+            "title": [{"text": {"content": workout.get("title", "Hevy Workout")}}]
+        },
         "Date": {"date": {"start": date_str}},
         "Training Type": {"select": {"name": "Gym-Strength"}},
         "Duration (min)": {"number": calculate_duration_min(start_time, end_time)},
         "Source": {"select": {"name": "Hevy"}},
-        "External ID": {"rich_text": [{"text": {"content": workout["id"]}}]},
+        "External ID": {
+            "rich_text": [{"text": {"content": workout.get("id", "")}}]
+        },
         "Volume (kg)": {"number": calculate_volume(exercises)},
         "Exercise Details": {
-            "rich_text": [{"text": {"content": format_exercise_details(exercises)[:2000]}}]
+            "rich_text": [
+                {
+                    "text": {
+                        "content": format_exercise_details(exercises)[
+                            :NOTION_RICH_TEXT_MAX_LENGTH
+                        ]
+                    }
+                }
+            ]
         },
     }
 
-    notes_parts = []
+    notes_parts: list[str] = []
     for ex in exercises:
         if ex.get("notes"):
-            notes_parts.append(f"{ex['title']}: {ex['notes']}")
+            title = ex.get("title", "Unknown Exercise")
+            notes_parts.append(f"{title}: {ex['notes']}")
     if notes_parts:
         properties["Notes"] = {
-            "rich_text": [{"text": {"content": " | ".join(notes_parts)[:2000]}}]
+            "rich_text": [
+                {
+                    "text": {
+                        "content": " | ".join(notes_parts)[
+                            :NOTION_RICH_TEXT_MAX_LENGTH
+                        ]
+                    }
+                }
+            ]
         }
 
-    resp = requests.post(
-        f"{NOTION_API_URL}/pages",
-        headers=get_notion_headers(),
-        json={"parent": {"database_id": db_id}, "properties": properties},
-        timeout=30,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    return notion.create_page(properties)
 
 
-def sync_workouts(full=False, since=None):
+def sync_workouts(
+    notion: NotionClient,
+    hevy_session: requests.Session,
+    hevy_headers: dict[str, str],
+    full: bool = False,
+    since: date | None = None,
+) -> tuple[int, int]:
     """Sync workouts from Hevy to Notion."""
     page = 1
     synced = 0
     skipped = 0
 
     while True:
-        data = fetch_hevy_workouts(page=page, page_size=10)
-        workouts = data.get("workouts", [])
-        page_count = data.get("page_count", 1)
+        data = fetch_hevy_workouts(hevy_session, hevy_headers, page=page, page_size=10)
+        workouts: list[dict[str, Any]] = data.get("workouts", [])
+        page_count: int = data.get("page_count", 1)
 
         if not workouts:
             break
 
         for workout in workouts:
-            workout_id = workout["id"]
-            workout_date = workout["start_time"][:10]
+            workout_id: str = workout.get("id", "")
+            workout_date: str = workout.get("start_time", "")[:10]
 
-            if since and workout_date < since:
+            if since and workout_date < since.isoformat():
                 logger.info("Reached workouts before %s, stopping", since)
                 return synced, skipped
 
-            if check_existing(workout_id):
-                logger.info("Skipping %s (already exists)", workout["title"])
+            if notion.check_existing(workout_id):
+                logger.info(
+                    "Skipping %s (already exists)", workout.get("title", "unknown")
+                )
                 skipped += 1
                 continue
 
-            logger.info("Syncing: %s (%s)", workout["title"], workout_date)
-            create_notion_entry(workout)
+            logger.info(
+                "Syncing: %s (%s)", workout.get("title", "unknown"), workout_date
+            )
+            create_notion_entry(notion, workout)
             synced += 1
 
         if not full or page >= page_count:
@@ -195,10 +222,18 @@ def sync_workouts(full=False, since=None):
     return synced, skipped
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Sync Hevy workouts to Notion")
-    parser.add_argument("--full", action="store_true", help="Sync all workouts (not just latest page)")
-    parser.add_argument("--since", type=str, help="Only sync workouts after this date (YYYY-MM-DD)")
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Sync all workouts (not just latest page)",
+    )
+    parser.add_argument(
+        "--since",
+        type=date.fromisoformat,
+        help="Only sync workouts after this date (YYYY-MM-DD)",
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     args = parser.parse_args()
 
@@ -207,8 +242,21 @@ def main():
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
+    load_dotenv()
+
+    try:
+        notion = NotionClient()
+        hevy_headers = get_hevy_headers()
+    except ConfigurationError as exc:
+        logger.error("%s", exc)
+        raise SystemExit(1) from exc
+
+    hevy_session = _build_hevy_session()
+
     logger.info("Starting Hevy -> Notion sync")
-    synced, skipped = sync_workouts(full=args.full, since=args.since)
+    synced, skipped = sync_workouts(
+        notion, hevy_session, hevy_headers, full=args.full, since=args.since
+    )
     logger.info("Done: %d synced, %d skipped", synced, skipped)
 
 

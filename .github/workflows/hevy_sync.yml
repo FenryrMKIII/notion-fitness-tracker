@@ -4,18 +4,55 @@ on:
   schedule:
     - cron: '0 */6 * * *'  # Every 6 hours
   workflow_dispatch:
+    inputs:
+      full:
+        description: 'Sync all workouts (not just latest page)'
+        type: boolean
+        default: true
+      since:
+        description: 'Only sync workouts after this date (YYYY-MM-DD)'
+        type: string
+        required: false
+      verbose:
+        description: 'Enable verbose logging'
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: hevy-sync
+  cancel-in-progress: false
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Validate secrets
+        run: |
+          missing=""
+          [ -z "$HEVY_API_KEY" ] && missing="$missing HEVY_API_KEY"
+          [ -z "$NOTION_API_KEY" ] && missing="$missing NOTION_API_KEY"
+          [ -z "$NOTION_TRAINING_DB_ID" ] && missing="$missing NOTION_TRAINING_DB_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required secrets:$missing"
+            exit 1
+          fi
+        env:
+          HEVY_API_KEY: ${{ secrets.HEVY_API_KEY }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_TRAINING_DB_ID: ${{ secrets.NOTION_TRAINING_DB_ID }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
+        with:
+          enable-cache: true
 
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install
 
       - name: Install dependencies
         run: uv sync
@@ -25,4 +62,9 @@ jobs:
           HEVY_API_KEY: ${{ secrets.HEVY_API_KEY }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_TRAINING_DB_ID: ${{ secrets.NOTION_TRAINING_DB_ID }}
-        run: uv run python scripts/hevy_sync.py --full
+        run: |
+          args=""
+          [ "${{ inputs.full }}" = "true" ] && args="$args --full"
+          [ -n "${{ inputs.since }}" ] && args="$args --since ${{ inputs.since }}"
+          [ "${{ inputs.verbose }}" = "true" ] && args="$args --verbose"
+          uv run python scripts/hevy_sync.py $args

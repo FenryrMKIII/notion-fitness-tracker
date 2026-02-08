@@ -1,27 +1,27 @@
-name: Garmin Sync
+name: Update Dashboard
 
 on:
   schedule:
-    - cron: '0 7 * * *'  # Daily at 7 AM UTC
+    - cron: '0 8 * * 1'  # Monday 8 AM UTC
   workflow_dispatch:
     inputs:
-      date:
-        description: 'Date to sync (YYYY-MM-DD). Defaults to yesterday.'
-        type: string
-        required: false
       verbose:
         description: 'Enable verbose logging'
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Dry run (calculate metrics without writing to Notion)'
         type: boolean
         default: false
 
 permissions: {}
 
 concurrency:
-  group: garmin-sync
+  group: update-dashboard
   cancel-in-progress: false
 
 jobs:
-  sync:
+  update:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -30,19 +30,19 @@ jobs:
       - name: Validate secrets
         run: |
           missing=""
-          [ -z "$GARMIN_EMAIL" ] && missing="$missing GARMIN_EMAIL"
-          [ -z "$GARMIN_PASSWORD" ] && missing="$missing GARMIN_PASSWORD"
           [ -z "$NOTION_API_KEY" ] && missing="$missing NOTION_API_KEY"
           [ -z "$NOTION_TRAINING_DB_ID" ] && missing="$missing NOTION_TRAINING_DB_ID"
+          [ -z "$NOTION_HEALTH_DB_ID" ] && missing="$missing NOTION_HEALTH_DB_ID"
+          [ -z "$NOTION_DASHBOARD_PAGE_ID" ] && missing="$missing NOTION_DASHBOARD_PAGE_ID"
           if [ -n "$missing" ]; then
             echo "::error::Missing required secrets:$missing"
             exit 1
           fi
         env:
-          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
-          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_TRAINING_DB_ID: ${{ secrets.NOTION_TRAINING_DB_ID }}
+          NOTION_HEALTH_DB_ID: ${{ secrets.NOTION_HEALTH_DB_ID }}
+          NOTION_DASHBOARD_PAGE_ID: ${{ secrets.NOTION_DASHBOARD_PAGE_ID }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
@@ -55,14 +55,14 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Run Garmin sync
+      - name: Update dashboard
         env:
-          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
-          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_TRAINING_DB_ID: ${{ secrets.NOTION_TRAINING_DB_ID }}
+          NOTION_HEALTH_DB_ID: ${{ secrets.NOTION_HEALTH_DB_ID }}
+          NOTION_DASHBOARD_PAGE_ID: ${{ secrets.NOTION_DASHBOARD_PAGE_ID }}
         run: |
           args=""
-          [ -n "${{ inputs.date }}" ] && args="$args --date ${{ inputs.date }}"
           [ "${{ inputs.verbose }}" = "true" ] && args="$args --verbose"
-          uv run python scripts/garmin_sync.py $args
+          [ "${{ inputs.dry_run }}" = "true" ] && args="$args --dry-run"
+          uv run python scripts/update_dashboard.py $args
