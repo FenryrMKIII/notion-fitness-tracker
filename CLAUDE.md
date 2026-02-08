@@ -9,7 +9,7 @@ Syncs fitness training and health data from multiple sources into Notion databas
 - **Language**: Python 3.11+
 - **Package manager**: uv (pyproject.toml, uv.lock)
 - **Key dependencies**: `requests`, `garminconnect`, `python-dotenv`
-- **Testing**: pytest (159 tests), ruff (linting), mypy (type checking)
+- **Testing**: pytest (173 tests), ruff (linting), mypy (type checking)
 - **CI/CD**: GitHub Actions with `prod` environment for secrets
 - **Notion API**: REST API v2022-06-28, accessed via `scripts/notion_client.py`
 
@@ -113,18 +113,23 @@ Syncs activities and health data from Garmin Connect. Flags: `--date DATE`, `--d
 - **Activities** → Training Sessions DB (maps activity types via `GARMIN_TYPE_MAPPING`)
 - **Health data** → Health Status Log DB (sleep, steps, RHR, body battery)
 - 4 Garmin endpoints fetched independently with per-endpoint error handling:
-  `get_sleep_data()`, `get_steps_data()`, `get_rhr_day()`, `get_body_battery()`
+  `get_sleep_data()`, `get_steps_data()`, `get_heart_rates()`, `get_body_battery()`
 - Multi-day mode: iterates date range, catches per-day errors, reports failures at end
 - Skips health sync gracefully if `NOTION_HEALTH_DB_ID` is not set
 
 ### `scripts/stryd_sync.py`
 
-Syncs running power data from Stryd (complement to Garmin). Flags: `--since DATE`, `--full`, `--debug`.
-- Stryd API: `POST https://www.stryd.com/b/email/signin` (auth), `GET /b/api/v1/activities/calendar` (activities)
-- **Complement mode**: matches Stryd activities to existing Garmin running entries by date, updates them with power metrics
+Syncs running power and biomechanics data from Stryd (complement to Garmin). Flags: `--since DATE`, `--full`, `--debug`.
+- Stryd API: `POST https://www.stryd.com/b/email/signin` (auth), `GET /b/api/v1/users/calendar` (activities)
+- **Auth**: Non-standard bearer header: `Authorization: Bearer: {token}` (note colon after Bearer)
+- **Date format**: MM-DD-YYYY (American, not ISO)
+- **Complement mode**: matches Stryd activities to existing Garmin running entries by date + Source=Garmin + Training Type=Running, updates them with power metrics
 - **Standalone mode**: creates new entries (Source = "Stryd") if no Garmin match found
 - Power metrics: watts, RSS, critical power, cadence, stride length, ground contact, vertical oscillation, leg spring stiffness, temperature, wind speed
-- `--debug` flag dumps raw API JSON to discover RPE and other undocumented fields
+- **RPE**: available as `rpe` field (integer 1-10, 0 = not entered). Stored as number, independent from Feeling
+- **Feeling**: available as `feel` field (great/good/normal/ok/bad/terrible). Mapped to Notion select via `FEEL_MAPPING`. RPE and Feeling are never correlated
+- Uses `average_power` (not `stryds` which is cumulative)
+- `--debug` flag dumps raw API JSON for inspection
 - External ID format: `stryd-{unix_timestamp}`
 
 ### `scripts/update_dashboard.py`
@@ -166,7 +171,7 @@ All workflows use `environment: prod`, pinned action versions (SHA), and secret 
 ## Testing
 
 ```bash
-uv run pytest           # 159 tests, ~0.2s
+uv run pytest           # 173 tests, ~0.2s
 uv run ruff check scripts/ tests/
 ```
 
@@ -182,7 +187,7 @@ All sync logic is tested via pure functions (extraction, property building, calc
 
 ## Known Quirks
 
-- Garmin `sleepQualityType` is not always present — the field may be missing or `None`
+- Garmin `sleepQualityType` is not always present — the field may be missing or `None`; falls back to `sleepScores.overall.qualifierKey`
 - Garmin `sleepTimeSeconds` can be `None` (not just 0) when the key exists — handled with `or 0`
 - Notion MCP `<database data-source-url>` does NOT work for inline database views — use `<mention-database>` instead
 - The dashboard script clears ALL blocks on the page before rewriting — don't put manual content on the dashboard page
@@ -191,9 +196,14 @@ All sync logic is tested via pure functions (extraction, property building, calc
 ## Stryd Integration
 
 - **API**: Undocumented REST API at `https://www.stryd.com/b/api/v1/` — email/password auth returns bearer token
+- **Auth header**: Non-standard `Authorization: Bearer: {token}` (colon after Bearer)
+- **Activities endpoint**: `GET /users/calendar?srtDate=MM-DD-YYYY&endDate=MM-DD-YYYY&sortBy=StartDate`
 - **Complement mode**: Stryd data enriches existing Garmin running entries (power, biomechanics, environmental conditions)
-- **RPE**: Stryd collects RPE via Post Run Report; availability via API unconfirmed — use `--debug` to inspect raw response fields
+- **RPE**: Available as `rpe` field (integer 1-10, 0 = not entered). Stored as a standalone number — never correlated to Feeling
+- **Feeling**: Available as `feel` field (great/good/normal/ok/bad/terrible). Mapped to Notion Feeling select. Independent from RPE
+- **Power**: Use `average_power` field (watts). The `stryds` field is cumulative (not average)
 - **Matching**: Finds Garmin entries by date + Source=Garmin + Training Type=Running filter
+- **Historical data**: ~310 activities going back to 2021
 
 ## Strava Integration
 
