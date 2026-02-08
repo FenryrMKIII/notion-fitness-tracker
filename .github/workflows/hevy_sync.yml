@@ -18,7 +18,8 @@ on:
         type: boolean
         default: false
 
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
   group: hevy-sync
