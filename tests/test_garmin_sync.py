@@ -103,6 +103,17 @@ class TestExtractSleepData:
         assert hours is None
         assert quality is None
 
+    def test_none_seconds(self) -> None:
+        data = {
+            "dailySleepDTO": {
+                "sleepTimeSeconds": None,
+                "sleepQualityType": "POOR",
+            }
+        }
+        hours, quality = extract_sleep_data(data)
+        assert hours is None
+        assert quality is None
+
 
 # ---------------------------------------------------------------------------
 # extract_steps

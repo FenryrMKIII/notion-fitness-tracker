@@ -146,7 +146,7 @@ def extract_sleep_data(
     if not sleep_data or not sleep_data.get("dailySleepDTO"):
         return None, None
     dto = sleep_data["dailySleepDTO"]
-    sleep_seconds = dto.get("sleepTimeSeconds", 0)
+    sleep_seconds = dto.get("sleepTimeSeconds") or 0
     if sleep_seconds == 0:
         return None, None
     hours = round(sleep_seconds / 3600, 1)
@@ -335,15 +335,23 @@ def main() -> None:
     logger.info("Syncing Garmin data from %s to %s (%d days)", start_date, end_date, num_days)
 
     total_synced = 0
+    failed_days: list[date] = []
     current = start_date
     while current <= end_date:
         logger.info("--- %s ---", current)
-        synced = sync_activities(client, notion, current)
-        sync_sleep_and_steps(client, notion, current)
-        total_synced += synced
+        try:
+            synced = sync_activities(client, notion, current)
+            sync_sleep_and_steps(client, notion, current)
+            total_synced += synced
+        except Exception as exc:
+            logger.error("Failed to sync %s: %s", current, exc)
+            failed_days.append(current)
         current += timedelta(days=1)
 
     logger.info("Done: %d activities synced across %d days", total_synced, num_days)
+    if failed_days:
+        logger.warning("Failed days: %s", ", ".join(d.isoformat() for d in failed_days))
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
