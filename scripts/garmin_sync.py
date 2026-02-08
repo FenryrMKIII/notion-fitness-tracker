@@ -306,6 +306,11 @@ def main() -> None:
         type=date.fromisoformat,
         help="Date to sync (YYYY-MM-DD). Defaults to yesterday.",
     )
+    parser.add_argument(
+        "--days",
+        type=int,
+        help="Number of days to sync (counting back from --date or yesterday).",
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
@@ -323,14 +328,22 @@ def main() -> None:
         logger.error("%s", exc)
         raise SystemExit(1) from exc
 
-    target_date: date = args.date if args.date else date.today() - timedelta(days=1)
+    end_date: date = args.date if args.date else date.today() - timedelta(days=1)
+    num_days: int = args.days if args.days else 1
+    start_date = end_date - timedelta(days=num_days - 1)
 
-    logger.info("Syncing Garmin data for %s", target_date)
+    logger.info("Syncing Garmin data from %s to %s (%d days)", start_date, end_date, num_days)
 
-    synced = sync_activities(client, notion, target_date)
-    sync_sleep_and_steps(client, notion, target_date)
+    total_synced = 0
+    current = start_date
+    while current <= end_date:
+        logger.info("--- %s ---", current)
+        synced = sync_activities(client, notion, current)
+        sync_sleep_and_steps(client, notion, current)
+        total_synced += synced
+        current += timedelta(days=1)
 
-    logger.info("Done: %d activities synced", synced)
+    logger.info("Done: %d activities synced across %d days", total_synced, num_days)
 
 
 if __name__ == "__main__":

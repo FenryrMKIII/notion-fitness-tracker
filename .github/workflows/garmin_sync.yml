@@ -9,6 +9,10 @@ on:
         description: 'Date to sync (YYYY-MM-DD). Defaults to yesterday.'
         type: string
         required: false
+      days:
+        description: 'Number of days to sync (counting back from date).'
+        type: string
+        required: false
       verbose:
         description: 'Enable verbose logging'
         type: boolean
@@ -69,5 +73,6 @@ jobs:
         run: |
           args=""
           [ -n "${{ inputs.date }}" ] && args="$args --date ${{ inputs.date }}"
+          [ -n "${{ inputs.days }}" ] && args="$args --days ${{ inputs.days }}"
           [ "${{ inputs.verbose }}" = "true" ] && args="$args --verbose"
           uv run python -m scripts.garmin_sync $args
