@@ -210,3 +210,46 @@ class NotionClient:
                 timeout=30,
             )
             resp.raise_for_status()
+
+    # ------------------------------------------------------------------
+    # Page update methods
+    # ------------------------------------------------------------------
+
+    def find_page_by_external_id(
+        self, external_id: str, db_id: str | None = None
+    ) -> str | None:
+        """Find a page by External ID and return its page ID, or None."""
+        target_db = db_id or self._db_id
+        self._rate_limit()
+        resp = self.session.post(
+            f"{NOTION_API_URL}/databases/{target_db}/query",
+            headers=self._headers,
+            json={
+                "filter": {
+                    "property": "External ID",
+                    "rich_text": {"equals": external_id},
+                }
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
+        if results:
+            page_id: str = results[0]["id"]
+            return page_id
+        return None
+
+    def update_page(
+        self, page_id: str, properties: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Update properties on an existing Notion page."""
+        self._rate_limit()
+        resp = self.session.patch(
+            f"{NOTION_API_URL}/pages/{page_id}",
+            headers=self._headers,
+            json={"properties": properties},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        result: dict[str, Any] = resp.json()
+        return result

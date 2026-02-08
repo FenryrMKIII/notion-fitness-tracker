@@ -114,6 +114,35 @@ class TestExtractSleepData:
         assert hours is None
         assert quality is None
 
+    def test_sleep_scores_fallback(self) -> None:
+        """When sleepQualityType is None, fall back to sleepScores."""
+        data = {
+            "dailySleepDTO": {
+                "sleepTimeSeconds": 27000,
+                "sleepQualityType": None,
+                "sleepScores": {
+                    "overall": {
+                        "value": 78,
+                        "qualifierKey": "GOOD",
+                    }
+                },
+            }
+        }
+        hours, quality = extract_sleep_data(data)
+        assert hours == 7.5
+        assert quality == "GOOD"
+
+    def test_sleep_scores_fallback_missing(self) -> None:
+        """When both sleepQualityType and sleepScores are absent."""
+        data = {
+            "dailySleepDTO": {
+                "sleepTimeSeconds": 27000,
+            }
+        }
+        hours, quality = extract_sleep_data(data)
+        assert hours == 7.5
+        assert quality is None
+
 
 # ---------------------------------------------------------------------------
 # extract_steps

@@ -9,7 +9,7 @@ Syncs fitness training and health data from multiple sources into Notion databas
 - **Language**: Python 3.11+
 - **Package manager**: uv (pyproject.toml, uv.lock)
 - **Key dependencies**: `requests`, `garminconnect`, `python-dotenv`
-- **Testing**: pytest (122 tests), ruff (linting), mypy (type checking)
+- **Testing**: pytest (159 tests), ruff (linting), mypy (type checking)
 - **CI/CD**: GitHub Actions with `prod` environment for secrets
 - **Notion API**: REST API v2022-06-28, accessed via `scripts/notion_client.py`
 
@@ -19,7 +19,9 @@ Syncs fitness training and health data from multiple sources into Notion databas
 Hevy API ──────> hevy_sync.py ──────> Training Sessions DB
 Garmin Connect ─> garmin_sync.py ──> Training Sessions DB
                                  └──> Health Status Log DB
-Strava ─────────> Zapier ──────────> Training Sessions DB
+Stryd API ─────> stryd_sync.py ──┐
+                                 ├──> Training Sessions DB (enriches Garmin runs or creates new)
+Strava ─────────> Zapier ────────┘──> Training Sessions DB
 Manual ─────────> Notion UI ───────> Training Sessions DB
 
 All 3 DBs ──────> update_dashboard.py ──> Dashboard Page (Notion blocks)
@@ -45,14 +47,25 @@ All 3 DBs ──────> update_dashboard.py ──> Dashboard Page (Notion
 | Date | date | Activity date |
 | Training Type | select | Running, Gym-Strength, Gym-Crossfit, Mobility, Specifics |
 | Duration (min) | number | |
-| Source | select | Hevy, Garmin, Strava, Manual |
-| External ID | rich_text | Dedup key (e.g. `garmin-12345`, `hevy-abc`) |
+| Source | select | Hevy, Garmin, Strava, Stryd, Manual |
+| External ID | rich_text | Dedup key (e.g. `garmin-12345`, `hevy-abc`, `stryd-1738900800`) |
 | Distance (km) | number | Optional |
 | Avg Heart Rate | number | Optional |
 | Volume (kg) | number | Total weight x reps |
 | Exercise Details | rich_text | Formatted exercise summary |
 | Notes | rich_text | Optional |
 | Feeling | select | Great, Good, Okay, Tired, Exhausted |
+| Power (W) | number | Stryd: average running power |
+| RSS | number | Stryd: Running Stress Score |
+| Critical Power (W) | number | Stryd: FTP at time of run |
+| Cadence (spm) | number | Stryd: steps per minute |
+| Stride Length (m) | number | Stryd: average stride length |
+| Ground Contact (ms) | number | Stryd: ground contact time |
+| Vertical Oscillation (cm) | number | Stryd: vertical bounce |
+| Leg Spring Stiffness | number | Stryd: running economy metric |
+| RPE | number | Rate of Perceived Exertion (1-10, from Stryd if available) |
+| Temperature (C) | number | Stryd: environmental temp during run |
+| Wind Speed | number | Stryd: wind speed during run |
 
 ### Health Status Log
 
@@ -81,6 +94,8 @@ Shared Notion REST API client. Features:
 - `check_existing(external_id)` — dedup in Training Sessions DB
 - `check_existing_in_db(db_id, external_id)` — dedup in any DB
 - `create_page(properties)` / `create_page_in_db(db_id, properties)` — page creation
+- `find_page_by_external_id(external_id, db_id)` — find page ID by External ID
+- `update_page(page_id, properties)` — update existing page properties
 - `query_database(db_id, filter, sorts)` — paginated queries
 - `get_block_children(block_id)` / `delete_block(block_id)` / `append_block_children(block_id, children)` — block operations for dashboard
 
@@ -102,6 +117,16 @@ Syncs activities and health data from Garmin Connect. Flags: `--date DATE`, `--d
 - Multi-day mode: iterates date range, catches per-day errors, reports failures at end
 - Skips health sync gracefully if `NOTION_HEALTH_DB_ID` is not set
 
+### `scripts/stryd_sync.py`
+
+Syncs running power data from Stryd (complement to Garmin). Flags: `--since DATE`, `--full`, `--debug`.
+- Stryd API: `POST https://www.stryd.com/b/email/signin` (auth), `GET /b/api/v1/activities/calendar` (activities)
+- **Complement mode**: matches Stryd activities to existing Garmin running entries by date, updates them with power metrics
+- **Standalone mode**: creates new entries (Source = "Stryd") if no Garmin match found
+- Power metrics: watts, RSS, critical power, cadence, stride length, ground contact, vertical oscillation, leg spring stiffness, temperature, wind speed
+- `--debug` flag dumps raw API JSON to discover RPE and other undocumented fields
+- External ID format: `stryd-{unix_timestamp}`
+
 ### `scripts/update_dashboard.py`
 
 Generates a Notion dashboard page with trend analysis. Flags: `--dry-run`.
@@ -122,6 +147,8 @@ Generates a Notion dashboard page with trend analysis. Flags: `--dry-run`.
 | `HEVY_API_KEY` | hevy_sync | Yes |
 | `GARMIN_EMAIL` | garmin_sync | Yes |
 | `GARMIN_PASSWORD` | garmin_sync | Yes |
+| `STRYD_EMAIL` | stryd_sync | Yes |
+| `STRYD_PASSWORD` | stryd_sync | Yes |
 
 For local dev: copy `.env.example` to `.env`. In CI: secrets are in the GitHub `prod` environment.
 
@@ -131,6 +158,7 @@ For local dev: copy `.env.example` to `.env`. In CI: secrets are in the GitHub `
 |----------|------|----------|--------|
 | Hevy Sync | `hevy_sync.yml` | Every 6h | `full`, `since`, `verbose` |
 | Garmin Sync | `garmin_sync.yml` | Daily 7 AM UTC | `date`, `days`, `verbose` |
+| Stryd Sync | `stryd_sync.yml` | Every 6h | `since`, `full`, `debug`, `verbose` |
 | Update Dashboard | `update_dashboard.yml` | Monday 8 AM UTC | `verbose`, `dry_run` |
 
 All workflows use `environment: prod`, pinned action versions (SHA), and secret validation steps.
@@ -138,7 +166,7 @@ All workflows use `environment: prod`, pinned action versions (SHA), and secret 
 ## Testing
 
 ```bash
-uv run pytest           # 122 tests, ~0.2s
+uv run pytest           # 159 tests, ~0.2s
 uv run ruff check scripts/ tests/
 ```
 
@@ -146,7 +174,8 @@ All sync logic is tested via pure functions (extraction, property building, calc
 
 ## Key Design Patterns
 
-- **Deduplication**: Every synced entry has an `External ID` (e.g. `garmin-12345`, `hevy-abc`, `garmin-health-2026-02-07`). Scripts check for existing entries before creating.
+- **Deduplication**: Every synced entry has an `External ID` (e.g. `garmin-12345`, `hevy-abc`, `garmin-health-2026-02-07`, `stryd-1738900800`). Scripts check for existing entries before creating.
+- **Complement enrichment**: Stryd sync finds matching Garmin entries by date + Source + Training Type filter, then updates them with power metrics via `update_page()`. Creates standalone entries only when no Garmin match exists.
 - **Pure functions**: Data extraction, property building, metric calculations, and Notion block construction are all pure — no side effects, easy to test.
 - **Graceful degradation**: Each Garmin health endpoint is fetched independently; if one fails, others still sync. Multi-day mode catches per-day errors.
 - **Rate limiting**: NotionClient sleeps 0.35s between API calls to stay within Notion's 3 req/s limit.
@@ -158,6 +187,13 @@ All sync logic is tested via pure functions (extraction, property building, calc
 - Notion MCP `<database data-source-url>` does NOT work for inline database views — use `<mention-database>` instead
 - The dashboard script clears ALL blocks on the page before rewriting — don't put manual content on the dashboard page
 - Weekly Statistics DB uses Notion-native rollups/relations — not written to by scripts
+
+## Stryd Integration
+
+- **API**: Undocumented REST API at `https://www.stryd.com/b/api/v1/` — email/password auth returns bearer token
+- **Complement mode**: Stryd data enriches existing Garmin running entries (power, biomechanics, environmental conditions)
+- **RPE**: Stryd collects RPE via Post Run Report; availability via API unconfirmed — use `--debug` to inspect raw response fields
+- **Matching**: Finds Garmin entries by date + Source=Garmin + Training Type=Running filter
 
 ## Strava Integration
 

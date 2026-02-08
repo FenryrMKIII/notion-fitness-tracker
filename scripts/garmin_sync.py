@@ -150,7 +150,14 @@ def extract_sleep_data(
     if sleep_seconds == 0:
         return None, None
     hours = round(sleep_seconds / 3600, 1)
+    # Try legacy field first, then modern sleepScores
     quality = dto.get("sleepQualityType")
+    if quality is None:
+        sleep_scores = dto.get("sleepScores")
+        if sleep_scores and isinstance(sleep_scores, dict):
+            overall = sleep_scores.get("overall")
+            if overall and isinstance(overall, dict):
+                quality = overall.get("qualifierKey")
     return hours, quality
 
 
@@ -261,7 +268,7 @@ def sync_sleep_and_steps(
 
     rhr_data: dict[str, Any] | None = None
     try:
-        rhr_data = client.get_rhr_day(target_date.isoformat())
+        rhr_data = client.get_heart_rates(target_date.isoformat())
     except Exception as exc:
         logger.warning("Could not fetch resting HR data: %s", exc)
 

@@ -12,6 +12,7 @@ dependencies = [
 [project.scripts]
 hevy-sync = "scripts.hevy_sync:main"
 garmin-sync = "scripts.garmin_sync:main"
+stryd-sync = "scripts.stryd_sync:main"
 dashboard-update = "scripts.update_dashboard:main"
 
 [dependency-groups]
