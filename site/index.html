@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fitness Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="header-content">
+      <h1>Fitness Dashboard</h1>
+      <div class="header-meta">
+        <div class="filter-buttons" id="rangeFilter">
+          <button data-range="4w">4W</button>
+          <button data-range="3m" class="active">3M</button>
+          <button data-range="6m">6M</button>
+          <button data-range="1y">1Y</button>
+          <button data-range="all">All</button>
+        </div>
+        <span class="last-updated" id="lastUpdated"></span>
+      </div>
+    </div>
+  </header>
+
+  <nav id="sectionNav">
+    <a href="#performance">Performance</a>
+    <a href="#training-load">Training Load</a>
+    <a href="#running-form">Running Form</a>
+    <a href="#balance">Balance</a>
+    <a href="#recovery">Recovery</a>
+    <a href="#activity">Activity</a>
+  </nav>
+
+  <main>
+    <section id="performance">
+      <h2>Performance</h2>
+      <div class="chart-grid two-col">
+        <div class="chart-card">
+          <h3>Running Power Trend</h3>
+          <canvas id="powerTrend"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Power vs Heart Rate</h3>
+          <canvas id="powerHr"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section id="training-load">
+      <h2>Training Load</h2>
+      <div class="chart-grid two-col">
+        <div class="chart-card">
+          <h3>Weekly RSS</h3>
+          <canvas id="weeklyRss"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Weekly Running Distance</h3>
+          <canvas id="weeklyDistance"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Training Duration by Type</h3>
+          <canvas id="durationByType"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>ACWR Trend</h3>
+          <canvas id="acwrTrend"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section id="running-form">
+      <h2>Running Form</h2>
+      <div class="chart-grid three-col">
+        <div class="chart-card">
+          <h3>Cadence Trend</h3>
+          <canvas id="cadenceTrend"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Ground Contact Time</h3>
+          <canvas id="gctTrend"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Vertical Oscillation</h3>
+          <canvas id="voscTrend"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section id="balance">
+      <h2>Balance</h2>
+      <div class="chart-grid two-col">
+        <div class="chart-card">
+          <h3>Training Type Distribution</h3>
+          <canvas id="typeDistribution"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Feeling Distribution</h3>
+          <canvas id="feelingDistribution"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section id="recovery">
+      <h2>Recovery</h2>
+      <div class="chart-grid three-col">
+        <div class="chart-card">
+          <h3>Sleep Duration</h3>
+          <canvas id="sleepTrend"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Resting HR</h3>
+          <canvas id="restingHrTrend"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Body Battery</h3>
+          <canvas id="bodyBatteryTrend"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section id="activity">
+      <h2>Activity</h2>
+      <div class="chart-grid full-width">
+        <div class="chart-card">
+          <h3>Daily Steps</h3>
+          <canvas id="stepsTrend"></canvas>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Data sources: Garmin Connect, Stryd, Hevy, Strava</p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

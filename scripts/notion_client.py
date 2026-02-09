@@ -253,3 +253,23 @@ class NotionClient:
         resp.raise_for_status()
         result: dict[str, Any] = resp.json()
         return result
+
+    def create_page_under_page(
+        self, parent_page_id: str, title: str
+    ) -> dict[str, Any]:
+        """Create a subpage under a parent page. Returns the new page object."""
+        self._rate_limit()
+        resp = self.session.post(
+            f"{NOTION_API_URL}/pages",
+            headers=self._headers,
+            json={
+                "parent": {"page_id": parent_page_id},
+                "properties": {
+                    "title": [{"text": {"content": title}}],
+                },
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        result: dict[str, Any] = resp.json()
+        return result

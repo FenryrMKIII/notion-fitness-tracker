@@ -6,7 +6,7 @@ Automated fitness and health data aggregation into Notion. Pulls training sessio
 
 - **Multi-source training sync** — Hevy (gym), Garmin (running/cycling), Stryd (running power/biomechanics), Strava (via Zapier), manual entry
 - **Stryd complement mode** — Enriches Garmin runs with power metrics (watts, RSS, cadence, ground contact, etc.) and RPE/feeling data
-- **Health data tracking** — Sleep, steps, resting HR, body battery from Garmin
+- **Health data tracking** — Sleep duration, sleep quality, steps, resting HR, body battery from Garmin
 - **Auto-generated dashboard** — 4-week trend tables with color-coded comparisons and insights
 - **Deduplication** — Safe to re-run; uses External ID to skip already-synced entries
 - **Backfill support** — Sync historical data with `--days 30` or `--full`

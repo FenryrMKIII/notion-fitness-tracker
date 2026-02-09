@@ -2,14 +2,15 @@
 
 ## What This Project Does
 
-Syncs fitness training and health data from multiple sources into Notion databases, then generates a dashboard with 4-week trend analysis. Runs as scheduled GitHub Actions workflows.
+Syncs fitness training and health data from multiple sources into Notion databases, then generates a dashboard with 4-week trend analysis. Also builds a static GitHub Pages site with interactive Chart.js charts. Runs as scheduled GitHub Actions workflows.
 
 ## Technology Stack
 
 - **Language**: Python 3.11+
 - **Package manager**: uv (pyproject.toml, uv.lock)
 - **Key dependencies**: `requests`, `garminconnect`, `python-dotenv`
-- **Testing**: pytest (173 tests), ruff (linting), mypy (type checking)
+- **Frontend**: Chart.js v4 static site (GitHub Pages)
+- **Testing**: pytest (~275 tests), ruff (linting), mypy (type checking)
 - **CI/CD**: GitHub Actions with `prod` environment for secrets
 - **Notion API**: REST API v2022-06-28, accessed via `scripts/notion_client.py`
 
@@ -25,6 +26,7 @@ Strava ─────────> Zapier ────────┘──> Tr
 Manual ─────────> Notion UI ───────> Training Sessions DB
 
 All 3 DBs ──────> update_dashboard.py ──> Dashboard Page (Notion blocks)
+All 3 DBs ──────> generate_charts_data.py ──> site/data.json ──> GitHub Pages
 ```
 
 ## Notion Database IDs
@@ -75,9 +77,9 @@ All 3 DBs ──────> update_dashboard.py ──> Dashboard Page (Notion
 | Date | date | |
 | External ID | rich_text | `"garmin-health-YYYY-MM-DD"` |
 | Sleep Duration (h) | number | From Garmin `sleepTimeSeconds / 3600` |
-| Sleep Quality | select | EXCELLENT, GOOD, FAIR, POOR (from Garmin `sleepQualityType`) |
+| Sleep Quality | select | EXCELLENT, GOOD, FAIR, POOR (from Garmin `sleepScores.overall.qualifierKey`, with `sleepQualityType` as legacy fallback) |
 | Steps | number | Sum of Garmin step entries |
-| Resting HR | number | From Garmin RHR endpoint |
+| Resting HR | number | From Garmin `get_heart_rates()` → `restingHeartRate` |
 | Body Battery | number | Max charged value from Garmin |
 | Status | select | Healthy, Sick, Injured, Rest Day, Travel (manual only) |
 | Condition | multi_select | Cold, Flu, Muscle Strain, etc. (manual only) |
@@ -134,12 +136,39 @@ Syncs running power and biomechanics data from Stryd (complement to Garmin). Fla
 
 ### `scripts/update_dashboard.py`
 
-Generates a Notion dashboard page with trend analysis. Flags: `--dry-run`.
-- Fetches last 4 weeks of training + health data from Notion
-- Computes weekly aggregates (TrainingWeek, HealthWeek dataclasses)
-- Builds Notion blocks: tables with color-coded trend values, callouts, insights
-- Replaces all blocks on the dashboard page (clear + append)
+Generates a hybrid multi-page Notion dashboard with trend analysis. Flags: `--dry-run`, `--verbose`.
+- **Header page**: 4-week training/running/health overview with column layouts, ACWR load analysis, and overreaching detection
+- **Subpages**: Monthly (6 periods), Quarterly (4), Yearly (2) deep-dive reports auto-created under the dashboard page
+- Fetches all training + health data (up to 2 years back for yearly reports) in a single query
+- Computes weekly aggregates via `TrainingWeek`, `HealthWeek`, `RunningPeriod`, `TrainingLoad` dataclasses
+- `RunningPeriod`: power, RSS, cadence, stride, ground contact, vertical oscillation, leg spring stiffness, RPE, Power:HR ratio
+- `TrainingLoad`: ACWR (acute:chronic workload ratio) with zone detection (optimal/caution/danger/detraining)
+- `detect_overreaching()`: flags high ACWR combined with declining body battery, sleep, or rising HR
+- Multi-timeframe periods via `get_period_boundaries(today, "week"|"month"|"quarter"|"year", count)`
+- 8 themed insight generators (running power, biomechanics, sleep, HR, recovery, strength, correlation)
+- Column layouts (2 or 3 columns) for callouts, database links in columns
+- Builds Notion blocks: tables with color-coded trend values, column_list layouts, callouts, toggles
+- Replaces all blocks on the dashboard page and each subpage (clear + append)
+- `DashboardData` dataclass bundles all computed metrics and insight strings
 - Pure functions for all calculations and block building (easy to test)
+
+### `scripts/generate_charts_data.py`
+
+Generates `data.json` for the static GitHub Pages dashboard. Flags: `--output PATH`, `--verbose`, `--dry-run`.
+- Reuses `fetch_training_data`, `fetch_health_data`, `calculate_training_week`, `calculate_health_week`, `calculate_running_period`, `calculate_training_load` from `update_dashboard.py`
+- `build_charts_data()`: pure function converting raw Notion records to the full JSON structure
+- `compute_rolling_acwr()`: computes ACWR for each week using a 4-week sliding window
+- Output: `site/data.json` with `sessions`, `health`, `weekly.training`, `weekly.health`, `weekly.running`, `weekly.load`
+- Weekly data is chronological (oldest first); individual records sorted by date ascending
+
+### `site/` — Static Dashboard
+
+GitHub Pages site with interactive Chart.js charts.
+- `index.html`: single-page layout with 6 sections, 15 chart canvases
+- `style.css`: dark theme (GitHub-inspired), responsive grid
+- `app.js`: Chart.js rendering, time range filtering (4W/3M/6M/1Y/All)
+- Charts: power trend, power vs HR, weekly RSS, distance, duration by type (stacked), ACWR with zone bands, cadence, ground contact, vertical oscillation, type/feeling donuts, sleep, resting HR, body battery, steps
+- `data.json` is gitignored (generated artifact)
 
 ## Environment Variables
 
@@ -165,13 +194,16 @@ For local dev: copy `.env.example` to `.env`. In CI: secrets are in the GitHub `
 | Garmin Sync | `garmin_sync.yml` | Daily 7 AM UTC | `date`, `days`, `verbose` |
 | Stryd Sync | `stryd_sync.yml` | Every 6h | `since`, `full`, `debug`, `verbose` |
 | Update Dashboard | `update_dashboard.yml` | Monday 8 AM UTC | `verbose`, `dry_run` |
+| Deploy Charts | `deploy_charts.yml` | Monday 8:30 AM UTC | `verbose` |
 
 All workflows use `environment: prod`, pinned action versions (SHA), and secret validation steps.
+
+The Deploy Charts workflow also requires GitHub Pages enabled (Settings > Pages > Source = "GitHub Actions") and `pages: write` + `id-token: write` permissions.
 
 ## Testing
 
 ```bash
-uv run pytest           # 173 tests, ~0.2s
+uv run pytest           # ~275 tests, ~0.2s
 uv run ruff check scripts/ tests/
 ```
 
@@ -187,7 +219,8 @@ All sync logic is tested via pure functions (extraction, property building, calc
 
 ## Known Quirks
 
-- Garmin `sleepQualityType` is not always present — the field may be missing or `None`; falls back to `sleepScores.overall.qualifierKey`
+- Garmin `sleepQualityType` is a deprecated/legacy field — almost always `None`. Code falls back to `sleepScores.overall.qualifierKey` (modern Garmin sleep score system)
+- Garmin `get_rhr_day()` returns a deeply nested structure unsuitable for simple extraction — use `get_heart_rates()` instead which returns `restingHeartRate` at the top level
 - Garmin `sleepTimeSeconds` can be `None` (not just 0) when the key exists — handled with `or 0`
 - Notion MCP `<database data-source-url>` does NOT work for inline database views — use `<mention-database>` instead
 - The dashboard script clears ALL blocks on the page before rewriting — don't put manual content on the dashboard page
