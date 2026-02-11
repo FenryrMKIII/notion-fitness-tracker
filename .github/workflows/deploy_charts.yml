@@ -3,6 +3,9 @@ name: Deploy Charts Dashboard
 on:
   schedule:
     - cron: '30 8 * * 1'  # Monday 8:30 AM UTC (30min after dashboard update)
+  workflow_run:
+    workflows: [Hevy Sync, Garmin Sync, Stryd Sync, Update Dashboard]
+    types: [completed]
   workflow_dispatch:
     inputs:
       verbose:
@@ -21,6 +24,8 @@ concurrency:
 
 jobs:
   build:
+    # Skip if triggered by a failed workflow run
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment: prod
     timeout-minutes: 15
