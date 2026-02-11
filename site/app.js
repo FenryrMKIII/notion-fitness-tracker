@@ -160,6 +160,11 @@ function renderAll() {
   renderDurationByType(wTraining, sessions);
   renderAcwrTrend(wLoad);
 
+  // Strength
+  renderWeeklyGymVolume(wTraining);
+  renderGymVolumePerSession(sessions);
+  renderGymDuration(sessions);
+
   // Running Form
   renderCadenceTrend(sessions);
   renderGctTrend(sessions);
@@ -412,6 +417,95 @@ function renderAcwrTrend(wLoad) {
         ...TIME_OPTIONS.plugins,
         legend: { display: false },
         annotation: {},
+      },
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Strength charts
+// ---------------------------------------------------------------------------
+
+const GYM_TYPES = new Set(['Gym-Strength', 'Gym-Crossfit']);
+
+function renderWeeklyGymVolume(wTraining) {
+  const data = wTraining.filter(w => w.gym_volume > 0);
+  if (!data.length) return;
+
+  charts.weeklyGymVolume = new Chart(document.getElementById('weeklyGymVolume'), {
+    type: 'bar',
+    data: {
+      labels: data.map(w => w.week_start),
+      datasets: [{
+        label: 'Volume (kg)',
+        data: data.map(w => w.gym_volume),
+        backgroundColor: COLORS.blue + 'cc',
+        borderColor: COLORS.blue,
+        borderWidth: 1,
+      }],
+    },
+    options: {
+      ...TIME_OPTIONS,
+      plugins: { ...TIME_OPTIONS.plugins, legend: { display: false } },
+      scales: {
+        ...TIME_OPTIONS.scales,
+        y: { ...TIME_OPTIONS.scales.y, title: { display: true, text: 'kg', color: COLORS.textSecondary } },
+      },
+    },
+  });
+}
+
+function renderGymVolumePerSession(sessions) {
+  const gym = sessions.filter(s => GYM_TYPES.has(s.training_type) && s.volume_kg);
+  if (!gym.length) return;
+
+  charts.gymVolumePerSession = new Chart(document.getElementById('gymVolumePerSession'), {
+    type: 'line',
+    data: {
+      labels: gym.map(s => s.date),
+      datasets: [{
+        label: 'Volume (kg)',
+        data: gym.map(s => s.volume_kg),
+        borderColor: COLORS.blue,
+        tension: 0.3,
+        fill: false,
+        pointRadius: 3,
+      }],
+    },
+    options: {
+      ...TIME_OPTIONS,
+      plugins: { ...TIME_OPTIONS.plugins, legend: { display: false } },
+      scales: {
+        ...TIME_OPTIONS.scales,
+        y: { ...TIME_OPTIONS.scales.y, title: { display: true, text: 'kg', color: COLORS.textSecondary } },
+      },
+    },
+  });
+}
+
+function renderGymDuration(sessions) {
+  const gym = sessions.filter(s => GYM_TYPES.has(s.training_type) && s.duration_min);
+  if (!gym.length) return;
+
+  charts.gymDuration = new Chart(document.getElementById('gymDuration'), {
+    type: 'line',
+    data: {
+      labels: gym.map(s => s.date),
+      datasets: [{
+        label: 'Duration (min)',
+        data: gym.map(s => s.duration_min),
+        borderColor: COLORS.purple,
+        tension: 0.3,
+        fill: false,
+        pointRadius: 3,
+      }],
+    },
+    options: {
+      ...TIME_OPTIONS,
+      plugins: { ...TIME_OPTIONS.plugins, legend: { display: false } },
+      scales: {
+        ...TIME_OPTIONS.scales,
+        y: { ...TIME_OPTIONS.scales.y, title: { display: true, text: 'min', color: COLORS.textSecondary } },
       },
     },
   });
