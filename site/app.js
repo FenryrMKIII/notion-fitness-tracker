@@ -150,6 +150,9 @@ function renderAll() {
   const wRunning = filterByDate(allData.weekly.running, 'week_start');
   const wLoad = filterByDate(allData.weekly.load, 'week_start');
 
+  // Calendar heatmap
+  renderHeatmap(sessions);
+
   // Performance
   renderPowerTrend(sessions);
   renderPowerHr(sessions);
@@ -181,6 +184,135 @@ function renderAll() {
 
   // Activity
   renderStepsTrend(health);
+}
+
+// ---------------------------------------------------------------------------
+// Activity Calendar Heatmap
+// ---------------------------------------------------------------------------
+
+function renderHeatmap(sessions) {
+  const container = document.getElementById('heatmap');
+  const legendEl = document.getElementById('heatmapLegend');
+  container.innerHTML = '';
+  legendEl.innerHTML = '';
+
+  if (!sessions.length) return;
+
+  // Build day -> types map
+  const dayMap = {};
+  sessions.forEach(s => {
+    if (!s.date || !s.training_type) return;
+    const d = s.date.slice(0, 10);
+    if (!dayMap[d]) dayMap[d] = new Set();
+    dayMap[d].add(s.training_type);
+  });
+
+  // Determine date range: from first Monday to last Sunday covering filtered data
+  const dates = Object.keys(dayMap).sort();
+  const allSessionDates = sessions.map(s => s.date).filter(Boolean).sort();
+  const firstDate = new Date(allSessionDates[0] + 'T00:00:00');
+  const lastDate = new Date(allSessionDates[allSessionDates.length - 1] + 'T00:00:00');
+
+  // Extend to full weeks (Mon-Sun)
+  const startMon = new Date(firstDate);
+  startMon.setDate(startMon.getDate() - ((startMon.getDay() + 6) % 7));
+  const endSun = new Date(lastDate);
+  endSun.setDate(endSun.getDate() + ((7 - endSun.getDay()) % 7));
+
+  // Count weeks
+  const totalDays = Math.round((endSun - startMon) / 86400000) + 1;
+  const totalWeeks = Math.ceil(totalDays / 7);
+
+  // Build grid
+  const wrapper = document.createElement('div');
+  wrapper.className = 'heatmap-container';
+
+  const grid = document.createElement('div');
+  grid.className = 'heatmap-grid';
+  grid.style.gridTemplateColumns = `auto repeat(${totalWeeks}, 14px)`;
+
+  // Month labels row
+  const emptyCorner = document.createElement('div');
+  grid.appendChild(emptyCorner);
+
+  let prevMonth = -1;
+  for (let w = 0; w < totalWeeks; w++) {
+    const weekDate = new Date(startMon);
+    weekDate.setDate(weekDate.getDate() + w * 7);
+    const month = weekDate.getMonth();
+    const label = document.createElement('div');
+    label.className = 'heatmap-month-label';
+    if (month !== prevMonth) {
+      label.textContent = weekDate.toLocaleString('en', { month: 'short' });
+      prevMonth = month;
+    }
+    grid.appendChild(label);
+  }
+
+  // Day rows (Mon=0 to Sun=6)
+  const dayNames = ['Mon', '', 'Wed', '', 'Fri', '', 'Sun'];
+  for (let dow = 0; dow < 7; dow++) {
+    const dayLabel = document.createElement('div');
+    dayLabel.className = 'heatmap-day-label';
+    dayLabel.textContent = dayNames[dow];
+    grid.appendChild(dayLabel);
+
+    for (let w = 0; w < totalWeeks; w++) {
+      const cellDate = new Date(startMon);
+      cellDate.setDate(cellDate.getDate() + w * 7 + dow);
+      const iso = cellDate.getFullYear() + '-' +
+        String(cellDate.getMonth() + 1).padStart(2, '0') + '-' +
+        String(cellDate.getDate()).padStart(2, '0');
+
+      const cell = document.createElement('div');
+      cell.className = 'heatmap-cell';
+
+      const types = dayMap[iso];
+      if (types) {
+        const typeArr = [...types];
+        cell.setAttribute('data-type', typeArr.join(','));
+
+        if (typeArr.length === 1) {
+          cell.style.background = TYPE_COLORS[typeArr[0]] || COLORS.gray;
+        } else {
+          // Multi-activity day: diagonal split
+          const c1 = TYPE_COLORS[typeArr[0]] || COLORS.gray;
+          const c2 = TYPE_COLORS[typeArr[1]] || COLORS.gray;
+          cell.style.setProperty('--color-1', c1);
+          cell.style.setProperty('--color-2', c2);
+          cell.classList.add('multi');
+        }
+
+        // Tooltip
+        const tooltip = document.createElement('div');
+        tooltip.className = 'heatmap-tooltip';
+        const dateStr = cellDate.toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' });
+        tooltip.textContent = `${dateStr}: ${typeArr.join(', ')}`;
+        cell.appendChild(tooltip);
+      }
+
+      grid.appendChild(cell);
+    }
+  }
+
+  wrapper.appendChild(grid);
+  container.appendChild(wrapper);
+
+  // Legend
+  const seenTypes = new Set();
+  sessions.forEach(s => { if (s.training_type) seenTypes.add(s.training_type); });
+  [...seenTypes].sort().forEach(type => {
+    const item = document.createElement('div');
+    item.className = 'heatmap-legend-item';
+    const swatch = document.createElement('div');
+    swatch.className = 'heatmap-legend-swatch';
+    swatch.style.background = TYPE_COLORS[type] || COLORS.gray;
+    const label = document.createElement('span');
+    label.textContent = type;
+    item.appendChild(swatch);
+    item.appendChild(label);
+    legendEl.appendChild(item);
+  });
 }
 
 // ---------------------------------------------------------------------------
