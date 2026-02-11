@@ -314,12 +314,15 @@ function renderDurationByType(wTraining, sessions) {
 
   sessions.forEach(s => {
     if (!s.date || !s.training_type || !s.duration_min) return;
-    // Find which week this session belongs to
-    const sessionDate = new Date(s.date + 'T00:00:00');
+    // Find which week this session belongs to (timezone-safe)
+    const parts = s.date.split('-');
+    const sessionDate = new Date(parts[0], parts[1] - 1, parts[2]);
     const day = sessionDate.getDay();
     const monday = new Date(sessionDate);
     monday.setDate(monday.getDate() - ((day + 6) % 7));
-    const weekStart = monday.toISOString().slice(0, 10);
+    const weekStart = monday.getFullYear() + '-' +
+      String(monday.getMonth() + 1).padStart(2, '0') + '-' +
+      String(monday.getDate()).padStart(2, '0');
     if (weekMap[weekStart]) {
       weekMap[weekStart][s.training_type] = (weekMap[weekStart][s.training_type] || 0) + s.duration_min;
     }
