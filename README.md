@@ -1,13 +1,13 @@
 # Notion Fitness Tracker
 
-Automated fitness and health data aggregation into Notion. Pulls training sessions from Hevy, Garmin, and Stryd, health metrics from Garmin, and generates a weekly dashboard with 4-week trends.
+Automated fitness and health data aggregation into Notion. Pulls training sessions from Hevy, Garmin, and Stryd, health metrics from Garmin, and generates a static GitHub Pages dashboard with interactive charts showing performance trends, training load, biomechanics, and recovery metrics.
 
 ## Features
 
 - **Multi-source training sync** — Hevy (gym), Garmin (running/cycling), Stryd (running power/biomechanics), Strava (via Zapier), manual entry
 - **Stryd complement mode** — Enriches Garmin runs with power metrics (watts, RSS, cadence, ground contact, etc.) and RPE/feeling data
 - **Health data tracking** — Sleep duration, sleep quality, steps, resting HR, body battery from Garmin
-- **Auto-generated dashboard** — 4-week trend tables with color-coded comparisons and insights
+- **Interactive dashboard** — GitHub Pages site with Chart.js charts: activity calendar heatmap, power trends, ACWR training load, strength metrics, running form, recovery data
 - **Deduplication** — Safe to re-run; uses External ID to skip already-synced entries
 - **Backfill support** — Sync historical data with `--days 30` or `--full`
 
@@ -24,11 +24,10 @@ Automated fitness and health data aggregation into Notion. Pulls training sessio
 | Source | Method | Schedule |
 |--------|--------|----------|
 | **Hevy** | Python script via GitHub Actions | Every 6 hours |
-| **Garmin** | Python script via GitHub Actions | Daily at 7 AM UTC |
-| **Stryd** | Python script via GitHub Actions | Every 6 hours |
+| **Garmin + Stryd** | Combined Python workflow (sequential) | Daily at 7 AM UTC |
 | **Strava** | Zapier automation | On new activity |
 | **CrossFit / Mobility** | Manual entry in Notion | — |
-| **Dashboard** | Python script via GitHub Actions | Weekly Monday 8 AM UTC |
+| **Dashboard** | Auto-deploy after any sync + Monday 8:30 AM UTC | — |
 
 ## Setup
 
@@ -67,7 +66,6 @@ Add these secrets in your repo's **Settings > Environments > prod**:
 | `NOTION_API_KEY` | Notion integration token |
 | `NOTION_TRAINING_DB_ID` | Training Sessions database ID |
 | `NOTION_HEALTH_DB_ID` | Health Status Log database ID |
-| `NOTION_DASHBOARD_PAGE_ID` | Dashboard page ID |
 | `HEVY_API_KEY` | Hevy API key (from Hevy Settings > API) |
 | `GARMIN_EMAIL` | Garmin Connect email |
 | `GARMIN_PASSWORD` | Garmin Connect password |
@@ -78,7 +76,7 @@ Add these secrets in your repo's **Settings > Environments > prod**:
 
 The Stryd sync enriches Garmin running entries with power-based metrics (watts, RSS, ground contact, cadence, etc.) and can store RPE and feeling data from your Stryd Post Run Reports.
 
-No additional setup needed beyond the GitHub secrets above. The workflow runs every 6 hours and automatically matches Stryd activities to existing Garmin entries by date.
+No additional setup needed beyond the GitHub secrets above. The combined Running Sync workflow runs daily at 7 AM UTC — Garmin sync runs first, then Stryd sync matches and enriches the Garmin entries with power data.
 
 To backfill historical data:
 
@@ -119,11 +117,14 @@ uv run python -m scripts.stryd_sync --since 2026-01-01
 # Stryd — sync all historical data
 uv run python -m scripts.stryd_sync --full
 
-# Dashboard — update the Notion dashboard
-uv run python -m scripts.update_dashboard
+# Dashboard — generate charts data locally
+uv run python -m scripts.generate_charts_data --output site/data.json
 
-# Dashboard — dry run (log metrics without writing)
-uv run python -m scripts.update_dashboard --dry-run
+# Cleanup — preview duplicate Running entries
+uv run python -m scripts.cleanup_duplicates --dry-run
+
+# Cleanup — archive duplicate Running entries
+uv run python -m scripts.cleanup_duplicates
 ```
 
 All commands accept `--verbose` / `-v` for debug logging.
@@ -133,23 +134,23 @@ All commands accept `--verbose` / `-v` for debug logging.
 Workflows run on schedule automatically. To trigger manually:
 
 ```bash
-# Garmin sync (yesterday)
-gh workflow run "Garmin Sync"
+# Combined Garmin + Stryd sync (yesterday)
+gh workflow run "Running Sync"
 
-# Garmin backfill (last 30 days)
-gh workflow run "Garmin Sync" --field days=30
+# Combined sync with Garmin backfill (last 30 days)
+gh workflow run "Running Sync" --field garmin_days=30
 
 # Hevy sync (all workouts)
 gh workflow run "Hevy Sync"
 
-# Stryd sync (last 7 days)
-gh workflow run "Stryd Sync"
-
-# Stryd sync (full history)
+# Stryd-only sync (full history backfill)
 gh workflow run "Stryd Sync" --field full=true
 
-# Dashboard update
-gh workflow run "Update Dashboard"
+# Garmin-only sync (specific date)
+gh workflow run "Garmin Sync" --field date=2026-02-01
+
+# Deploy dashboard
+gh workflow run "Deploy Charts Dashboard"
 ```
 
 ## Development
@@ -169,20 +170,29 @@ uv run mypy scripts/
 
 ```
 scripts/
-  notion_client.py      # Shared Notion API client (retry, rate limiting)
-  hevy_sync.py          # Hevy -> Training Sessions sync
-  garmin_sync.py         # Garmin -> Training Sessions + Health Status Log sync
-  stryd_sync.py          # Stryd -> Training Sessions (complement mode)
-  update_dashboard.py    # Dashboard generation with trend tables + insights
+  notion_client.py        # Shared Notion API client (retry, rate limiting, archive)
+  hevy_sync.py            # Hevy -> Training Sessions sync
+  garmin_sync.py           # Garmin -> Training Sessions + Health Status Log sync
+  stryd_sync.py            # Stryd -> Training Sessions (complement mode)
+  generate_charts_data.py  # Generates site/data.json for the dashboard
+  update_dashboard.py      # Shared pure functions (retired as standalone script)
+  cleanup_duplicates.py    # One-time duplicate Running entry cleanup with power merge
+site/
+  index.html              # Dashboard: 8 sections, 18 charts + activity calendar
+  app.js                  # Chart.js rendering, time range filtering
+  style.css               # Dark theme, responsive grid
 tests/
   test_notion_client.py
   test_hevy_sync.py
   test_garmin_sync.py
   test_stryd_sync.py
   test_update_dashboard.py
+  test_generate_charts_data.py
+  test_cleanup_duplicates.py
 .github/workflows/
-  hevy_sync.yml          # Every 6 hours
-  garmin_sync.yml        # Daily 7 AM UTC
-  stryd_sync.yml         # Every 6 hours
-  update_dashboard.yml   # Weekly Monday 8 AM UTC
+  running_sync.yml         # Daily 7 AM UTC (Garmin then Stryd sequential)
+  hevy_sync.yml            # Every 6 hours
+  garmin_sync.yml          # Manual dispatch only
+  stryd_sync.yml           # Manual dispatch only
+  deploy_charts.yml        # Auto after sync + Monday 8:30 AM UTC
 ```
