@@ -236,6 +236,8 @@ function renderHeatmap(sessions) {
   grid.appendChild(emptyCorner);
 
   let prevMonth = -1;
+  let lastLabelWeek = -Infinity;
+  const minLabelGap = 3; // minimum weeks between labels to avoid overlap
   for (let w = 0; w < totalWeeks; w++) {
     const weekDate = new Date(startMon);
     weekDate.setDate(weekDate.getDate() + w * 7);
@@ -243,7 +245,10 @@ function renderHeatmap(sessions) {
     const label = document.createElement('div');
     label.className = 'heatmap-month-label';
     if (month !== prevMonth) {
-      label.textContent = weekDate.toLocaleString('en', { month: 'short' });
+      if (w - lastLabelWeek >= minLabelGap) {
+        label.textContent = weekDate.toLocaleString('en', { month: 'short' });
+        lastLabelWeek = w;
+      }
       prevMonth = month;
     }
     grid.appendChild(label);
