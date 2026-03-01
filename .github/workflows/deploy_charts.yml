@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: '30 8 * * 1'  # Monday 8:30 AM UTC (30min after dashboard update)
   workflow_run:
-    workflows: [Hevy Sync, Garmin Sync, Stryd Sync, Running Sync, Update Dashboard]
+    workflows: [Hevy Sync, Garmin Sync, Stryd Sync, Running Sync]
     types: [completed]
   workflow_dispatch:
     inputs:
