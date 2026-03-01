@@ -134,7 +134,7 @@ def create_notion_entry(
         },
         "Date": {"date": {"start": date_str}},
         "Training Type": {"select": {"name": "Gym-Strength"}},
-        "Duration (min)": {"number": calculate_duration_min(start_time, end_time)},
+        "Duration (min)": {"number": min(calculate_duration_min(start_time, end_time), 60)},
         "Source": {"select": {"name": "Hevy"}},
         "External ID": {
             "rich_text": [{"text": {"content": workout.get("id", "")}}]

@@ -1,6 +1,7 @@
 """Tests for scripts.stryd_sync helper functions."""
 
 from datetime import UTC, datetime
+from typing import Any
 
 from scripts.stryd_sync import (
     FEEL_MAPPING,
@@ -9,6 +10,7 @@ from scripts.stryd_sync import (
     _safe_round,
     build_stryd_create_properties,
     build_stryd_update_properties,
+    deduplicate_activities,
     extract_date,
     extract_feel,
     extract_power_metrics,
@@ -342,3 +344,68 @@ class TestBuildStrydCreateProperties:
         props = build_stryd_create_properties(SAMPLE_ACTIVITY, metrics)
         ext_id = props["External ID"]["rich_text"][0]["text"]["content"]
         assert ext_id == f"stryd-{SAMPLE_ACTIVITY['timestamp']}"
+
+
+# ---------------------------------------------------------------------------
+# deduplicate_activities
+# ---------------------------------------------------------------------------
+
+
+def _make_activity(
+    ts: int,
+    distance: float = 5000,
+    hr: int | None = None,
+    name: str = "Run",
+) -> dict[str, Any]:
+    """Helper to create a minimal Stryd activity dict for dedup tests."""
+    act: dict[str, Any] = {"timestamp": ts, "distance": distance, "name": name}
+    if hr is not None:
+        act["average_heart_rate"] = hr
+    return act
+
+
+class TestDeduplicateActivities:
+    def test_two_same_date_similar_distance_keeps_best(self) -> None:
+        """Two activities on the same date with similar distance — keep the one with HR."""
+        ts_base = 1735689600  # 2025-01-01 00:00 UTC
+        a1 = _make_activity(ts_base, distance=10000, name="Afternoon Run")
+        a2 = _make_activity(ts_base + 3600, distance=10500, hr=145, name="Workout")
+        result = deduplicate_activities([a1, a2])
+        assert len(result) == 1
+        assert result[0]["name"] == "Workout"  # has HR → higher score
+
+    def test_two_same_date_different_distance_keeps_both(self) -> None:
+        """Two activities on the same date with very different distance — keep both."""
+        ts_base = 1735689600
+        a1 = _make_activity(ts_base, distance=5000, name="Short")
+        a2 = _make_activity(ts_base + 3600, distance=15000, name="Long")
+        result = deduplicate_activities([a1, a2])
+        assert len(result) == 2
+
+    def test_single_activity_unchanged(self) -> None:
+        a = _make_activity(1735689600, distance=10000)
+        result = deduplicate_activities([a])
+        assert len(result) == 1
+        assert result[0] is a
+
+    def test_empty_list(self) -> None:
+        assert deduplicate_activities([]) == []
+
+    def test_three_activities_two_similar_one_different(self) -> None:
+        """Three activities: two with similar distance cluster together, one distinct."""
+        ts_base = 1735689600
+        a1 = _make_activity(ts_base, distance=10000, name="Garmin Run")
+        a2 = _make_activity(ts_base + 1800, distance=10200, hr=150, name="Stryd Run")
+        a3 = _make_activity(ts_base + 7200, distance=3000, name="Short Jog")
+        result = deduplicate_activities([a1, a2, a3])
+        assert len(result) == 2
+        names = {r["name"] for r in result}
+        assert "Stryd Run" in names  # best of cluster
+        assert "Short Jog" in names  # separate cluster
+
+    def test_different_dates_not_clustered(self) -> None:
+        """Activities on different dates are never clustered together."""
+        a1 = _make_activity(1735689600, distance=10000)  # Jan 1
+        a2 = _make_activity(1735776000, distance=10000)  # Jan 2
+        result = deduplicate_activities([a1, a2])
+        assert len(result) == 2

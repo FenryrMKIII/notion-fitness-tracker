@@ -65,8 +65,7 @@ jobs:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_TRAINING_DB_ID: ${{ secrets.NOTION_TRAINING_DB_ID }}
         run: |
-          args=""
-          [ "${{ inputs.full }}" = "true" ] && args="$args --full"
+          args="--full"
           [ -n "${{ inputs.since }}" ] && args="$args --since ${{ inputs.since }}"
           [ "${{ inputs.verbose }}" = "true" ] && args="$args --verbose"
           uv run python -m scripts.hevy_sync $args

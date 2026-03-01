@@ -1,0 +1,121 @@
+name: Running Sync
+
+on:
+  schedule:
+    - cron: '0 7 * * *'   # Daily at 7 AM UTC — Garmin + Stryd sequential
+    - cron: '0 */6 * * *'  # Every 6 hours — Stryd-only freshness
+  workflow_dispatch:
+    inputs:
+      garmin_date:
+        description: 'Garmin: date to sync (YYYY-MM-DD). Defaults to yesterday.'
+        type: string
+        required: false
+      garmin_days:
+        description: 'Garmin: number of days to sync (counting back from date).'
+        type: string
+        required: false
+      stryd_since:
+        description: 'Stryd: sync activities from this date (YYYY-MM-DD)'
+        type: string
+        required: false
+      stryd_full:
+        description: 'Stryd: sync all historical activities'
+        type: boolean
+        default: false
+      verbose:
+        description: 'Enable verbose logging'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: running-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    environment: prod
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Validate secrets
+        run: |
+          missing=""
+          [ -z "$GARMIN_EMAIL" ] && missing="$missing GARMIN_EMAIL"
+          [ -z "$GARMIN_PASSWORD" ] && missing="$missing GARMIN_PASSWORD"
+          [ -z "$STRYD_EMAIL" ] && missing="$missing STRYD_EMAIL"
+          [ -z "$STRYD_PASSWORD" ] && missing="$missing STRYD_PASSWORD"
+          [ -z "$NOTION_API_KEY" ] && missing="$missing NOTION_API_KEY"
+          [ -z "$NOTION_TRAINING_DB_ID" ] && missing="$missing NOTION_TRAINING_DB_ID"
+          [ -z "$NOTION_HEALTH_DB_ID" ] && missing="$missing NOTION_HEALTH_DB_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required secrets:$missing"
+            exit 1
+          fi
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          STRYD_EMAIL: ${{ secrets.STRYD_EMAIL }}
+          STRYD_PASSWORD: ${{ secrets.STRYD_PASSWORD }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_TRAINING_DB_ID: ${{ secrets.NOTION_TRAINING_DB_ID }}
+          NOTION_HEALTH_DB_ID: ${{ secrets.NOTION_HEALTH_DB_ID }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Determine schedule type
+        id: schedule
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            # 7 AM UTC = daily combined run; other hours = Stryd-only
+            hour=$(date -u +%H)
+            if [ "$hour" = "07" ]; then
+              echo "run_garmin=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "run_garmin=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # workflow_dispatch: always run Garmin
+            echo "run_garmin=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Garmin sync
+        if: steps.schedule.outputs.run_garmin == 'true'
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_TRAINING_DB_ID: ${{ secrets.NOTION_TRAINING_DB_ID }}
+          NOTION_HEALTH_DB_ID: ${{ secrets.NOTION_HEALTH_DB_ID }}
+        run: |
+          args=""
+          [ -n "${{ inputs.garmin_date }}" ] && args="$args --date ${{ inputs.garmin_date }}"
+          [ -n "${{ inputs.garmin_days }}" ] && args="$args --days ${{ inputs.garmin_days }}"
+          [ "${{ inputs.verbose }}" = "true" ] && args="$args --verbose"
+          uv run python -m scripts.garmin_sync $args
+
+      - name: Run Stryd sync
+        env:
+          STRYD_EMAIL: ${{ secrets.STRYD_EMAIL }}
+          STRYD_PASSWORD: ${{ secrets.STRYD_PASSWORD }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_TRAINING_DB_ID: ${{ secrets.NOTION_TRAINING_DB_ID }}
+        run: |
+          args=""
+          [ "${{ inputs.stryd_full }}" = "true" ] && args="$args --full"
+          [ -n "${{ inputs.stryd_since }}" ] && args="$args --since ${{ inputs.stryd_since }}"
+          [ "${{ inputs.verbose }}" = "true" ] && args="$args --verbose"
+          uv run python -m scripts.stryd_sync $args

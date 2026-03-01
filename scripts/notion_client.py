@@ -254,6 +254,17 @@ class NotionClient:
         result: dict[str, Any] = resp.json()
         return result
 
+    def archive_page(self, page_id: str) -> None:
+        """Archive a Notion page via PATCH /pages/{id} with archived=true."""
+        self._rate_limit()
+        resp = self.session.patch(
+            f"{NOTION_API_URL}/pages/{page_id}",
+            headers=self._headers,
+            json={"archived": True},
+            timeout=30,
+        )
+        resp.raise_for_status()
+
     def create_page_under_page(
         self, parent_page_id: str, title: str
     ) -> dict[str, Any]:

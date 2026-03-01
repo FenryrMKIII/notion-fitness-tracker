@@ -2,7 +2,7 @@
 
 ## What This Project Does
 
-Syncs fitness training and health data from multiple sources into Notion databases, then generates a dashboard with 4-week trend analysis. Also builds a static GitHub Pages site with interactive Chart.js charts. Runs as scheduled GitHub Actions workflows.
+Syncs fitness training and health data from multiple sources into Notion databases, then generates a static GitHub Pages dashboard with interactive Chart.js charts showing trends, load analysis, and biomechanics. Runs as scheduled GitHub Actions workflows.
 
 ## Technology Stack
 
@@ -25,8 +25,7 @@ Stryd API ─────> stryd_sync.py ──┐
 Strava ─────────> Zapier ────────┘──> Training Sessions DB
 Manual ─────────> Notion UI ───────> Training Sessions DB
 
-All 3 DBs ──────> update_dashboard.py ──> Dashboard Page (Notion blocks)
-All 3 DBs ──────> generate_charts_data.py ──> site/data.json ──> GitHub Pages
+All 3 DBs ──────> generate_charts_data.py ──> site/data.json ──> GitHub Pages (dashboard)
 ```
 
 ## Notion Database IDs
@@ -37,7 +36,7 @@ All 3 DBs ──────> generate_charts_data.py ──> site/data.json ─
 | Training Sessions | `13d713283dd14cd89ba1eb7ac77db89f` | `dad510e1-5618-49f9-a93f-208e0039886b` |
 | Health Status Log | `8092ea0a10af4fc895910dec2f0e2862` | `9d63129d-7352-45d2-8c81-4a003102896c` |
 | Weekly Statistics | `4f54bdec7af746b78e02eb4a1b290052` | `f137563b-1870-4da6-8f2a-53bf2db2e756` |
-| Dashboard Page | `300483e24127810e8458d0bbedc7bb7e` | — |
+| Dashboard Page (retired) | `300483e24127810e8458d0bbedc7bb7e` | — |
 
 ## Database Schemas
 
@@ -134,23 +133,13 @@ Syncs running power and biomechanics data from Stryd (complement to Garmin). Fla
 - `--debug` flag dumps raw API JSON for inspection
 - External ID format: `stryd-{unix_timestamp}`
 
-### `scripts/update_dashboard.py`
+### `scripts/update_dashboard.py` (retired — Notion dashboard no longer used)
 
-Generates a hybrid multi-page Notion dashboard with trend analysis. Flags: `--dry-run`, `--verbose`.
-- **Header page**: 4-week training/running/health overview with column layouts, ACWR load analysis, and overreaching detection
-- **Subpages**: Monthly (6 periods), Quarterly (4), Yearly (2) deep-dive reports auto-created under the dashboard page
-- Fetches all training + health data (up to 2 years back for yearly reports) in a single query
-- Computes weekly aggregates via `TrainingWeek`, `HealthWeek`, `RunningPeriod`, `TrainingLoad` dataclasses
-- `RunningPeriod`: power, RSS, cadence, stride, ground contact, vertical oscillation, leg spring stiffness, RPE, Power:HR ratio
-- `TrainingLoad`: ACWR (acute:chronic workload ratio) with zone detection (optimal/caution/danger/detraining)
-- `detect_overreaching()`: flags high ACWR combined with declining body battery, sleep, or rising HR
-- Multi-timeframe periods via `get_period_boundaries(today, "week"|"month"|"quarter"|"year", count)`
-- 8 themed insight generators (running power, biomechanics, sleep, HR, recovery, strength, correlation)
-- Column layouts (2 or 3 columns) for callouts, database links in columns
-- Builds Notion blocks: tables with color-coded trend values, column_list layouts, callouts, toggles
-- Replaces all blocks on the dashboard page and each subpage (clear + append)
-- `DashboardData` dataclass bundles all computed metrics and insight strings
-- Pure functions for all calculations and block building (easy to test)
+Previously generated a Notion-based dashboard. Now serves only as a library of shared pure functions reused by `generate_charts_data.py`:
+- `fetch_training_data()`, `fetch_health_data()` — query Notion DBs
+- `calculate_training_week()`, `calculate_health_week()`, `calculate_running_period()`, `calculate_training_load()` — weekly aggregate computations
+- `TrainingWeek`, `HealthWeek`, `RunningPeriod`, `TrainingLoad` dataclasses
+- `detect_overreaching()`, `get_period_boundaries()`, `get_week_boundaries()`
 
 ### `scripts/generate_charts_data.py`
 
@@ -177,7 +166,7 @@ GitHub Pages site with interactive Chart.js charts.
 | `NOTION_API_KEY` | All scripts | Yes |
 | `NOTION_TRAINING_DB_ID` | All scripts | Yes |
 | `NOTION_HEALTH_DB_ID` | garmin_sync, update_dashboard | Yes (garmin_sync skips if missing) |
-| `NOTION_DASHBOARD_PAGE_ID` | update_dashboard | Yes |
+| `NOTION_DASHBOARD_PAGE_ID` | update_dashboard (retired) | No |
 | `HEVY_API_KEY` | hevy_sync | Yes |
 | `GARMIN_EMAIL` | garmin_sync | Yes |
 | `GARMIN_PASSWORD` | garmin_sync | Yes |
@@ -193,8 +182,8 @@ For local dev: copy `.env.example` to `.env`. In CI: secrets are in the GitHub `
 | Hevy Sync | `hevy_sync.yml` | Every 6h | `full`, `since`, `verbose` |
 | Garmin Sync | `garmin_sync.yml` | Daily 7 AM UTC | `date`, `days`, `verbose` |
 | Stryd Sync | `stryd_sync.yml` | Every 6h | `since`, `full`, `debug`, `verbose` |
-| Update Dashboard | `update_dashboard.yml` | Monday 8 AM UTC | `verbose`, `dry_run` |
-| Deploy Charts | `deploy_charts.yml` | Monday 8:30 AM UTC | `verbose` |
+| Update Dashboard (retired) | `update_dashboard.yml` | Monday 8 AM UTC | `verbose`, `dry_run` |
+| Deploy Charts (dashboard) | `deploy_charts.yml` | Monday 8:30 AM UTC | `verbose` |
 
 All workflows use `environment: prod`, pinned action versions (SHA), and secret validation steps.
 
