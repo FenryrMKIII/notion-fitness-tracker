@@ -2,8 +2,7 @@ name: Running Sync
 
 on:
   schedule:
-    - cron: '0 7 * * *'   # Daily at 7 AM UTC — Garmin + Stryd sequential
-    - cron: '0 */6 * * *'  # Every 6 hours — Stryd-only freshness
+    - cron: '0 7 * * *'  # Daily at 7 AM UTC — Garmin then Stryd sequential
   workflow_dispatch:
     inputs:
       garmin_date:
@@ -76,24 +75,7 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Determine schedule type
-        id: schedule
-        run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            # 7 AM UTC = daily combined run; other hours = Stryd-only
-            hour=$(date -u +%H)
-            if [ "$hour" = "07" ]; then
-              echo "run_garmin=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "run_garmin=false" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            # workflow_dispatch: always run Garmin
-            echo "run_garmin=true" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Run Garmin sync
-        if: steps.schedule.outputs.run_garmin == 'true'
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
