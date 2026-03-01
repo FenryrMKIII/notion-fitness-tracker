@@ -66,8 +66,8 @@ def authenticate(
     session: requests.Session,
     email: str,
     password: str,
-) -> str:
-    """Authenticate with Stryd and return a bearer token."""
+) -> tuple[str, str]:
+    """Authenticate with Stryd and return (token, user_id)."""
     resp = session.post(
         f"{STRYD_BASE_URL}/email/signin",
         json={"email": email, "password": password},
@@ -76,8 +76,7 @@ def authenticate(
     if resp.status_code != 200:
         raise RuntimeError(f"Stryd authentication failed (HTTP {resp.status_code})")
     data: dict[str, Any] = resp.json()
-    token: str = data["token"]
-    return token
+    return data["token"], data["id"]
 
 
 def fetch_activities(
@@ -85,16 +84,19 @@ def fetch_activities(
     token: str,
     start_date: date,
     end_date: date,
+    user_id: str = "",
 ) -> list[dict[str, Any]]:
     """Fetch activity summaries from Stryd for a date range."""
     headers = {"Authorization": f"Bearer: {token}"}
-    params = {
-        "srtDate": start_date.strftime("%m-%d-%Y"),
-        "endDate": end_date.strftime("%m-%d-%Y"),
-        "sortBy": "StartDate",
+    from_ts = int(datetime.combine(start_date, datetime.min.time()).timestamp())
+    to_ts = int(datetime.combine(end_date, datetime.min.time()).timestamp())
+    params: dict[str, Any] = {
+        "from": from_ts,
+        "to": to_ts,
+        "include_deleted": "false",
     }
     resp = session.get(
-        f"{STRYD_API_URL}/users/calendar",
+        f"{STRYD_API_URL}/users/{user_id}/calendar",
         headers=headers,
         params=params,
         timeout=30,
@@ -108,6 +110,78 @@ def fetch_activities(
 # ---------------------------------------------------------------------------
 # Data extraction (pure functions)
 # ---------------------------------------------------------------------------
+
+
+def deduplicate_activities(
+    activities: list[dict[str, Any]],
+    distance_threshold: float = 0.15,
+) -> list[dict[str, Any]]:
+    """Remove duplicate Stryd activities for the same run.
+
+    Stryd's API often returns two entries for a single run — one from the
+    Garmin-synced source and one native Stryd workout.  This function:
+
+    1. Groups activities by date.
+    2. Within each date, clusters activities whose distance is within
+       *distance_threshold* (default 15 %).
+    3. Keeps the "best" entry per cluster (most data fields, prefers HR).
+    4. Returns the flattened, deduplicated list.
+    """
+    from collections import defaultdict
+
+    by_date: dict[date, list[dict[str, Any]]] = defaultdict(list)
+    for act in activities:
+        by_date[extract_date(act)].append(act)
+
+    result: list[dict[str, Any]] = []
+    for _d, group in sorted(by_date.items()):
+        if len(group) == 1:
+            result.append(group[0])
+            continue
+        # Cluster by similar distance
+        clusters: list[list[dict[str, Any]]] = []
+        used = [False] * len(group)
+        for i, a in enumerate(group):
+            if used[i]:
+                continue
+            cluster = [a]
+            used[i] = True
+            dist_a = float(a.get("distance", 0) or 0)
+            for j in range(i + 1, len(group)):
+                if used[j]:
+                    continue
+                dist_b = float(group[j].get("distance", 0) or 0)
+                if _distances_similar(dist_a, dist_b, distance_threshold):
+                    cluster.append(group[j])
+                    used[j] = True
+            clusters.append(cluster)
+        for cluster in clusters:
+            best = max(cluster, key=_activity_quality_score)
+            result.append(best)
+    return result
+
+
+def _distances_similar(a: float, b: float, threshold: float) -> bool:
+    """Return True if two distances are within *threshold* fraction of each other."""
+    if a <= 0 and b <= 0:
+        return True
+    ref = max(a, b)
+    if ref == 0:
+        return True
+    return abs(a - b) / ref <= threshold
+
+
+def _activity_quality_score(activity: dict[str, Any]) -> tuple[int, int, float]:
+    """Score an activity for dedup selection.
+
+    Returns a tuple for tie-breaking:
+      (has_hr, non_null_field_count, distance)
+    Higher is better.
+    """
+    non_null = sum(1 for v in activity.values() if v is not None and v != 0 and v != "")
+    has_hr = 1 if activity.get("average_heart_rate") else 0
+    dist = float(activity.get("distance", 0) or 0)
+    return (has_hr, non_null, dist)
 
 
 def extract_timestamp(activity: dict[str, Any]) -> datetime:
@@ -294,15 +368,17 @@ def build_stryd_create_properties(
 # ---------------------------------------------------------------------------
 
 
-def find_garmin_match(
+def find_existing_match(
     notion: NotionClient,
     activity_time: datetime,
     db_id: str,
+    stryd_distance_m: float = 0,
 ) -> str | None:
-    """Find a Garmin Training Session entry that matches the Stryd activity time.
+    """Find an existing Running entry that matches the Stryd activity by date.
 
-    Searches for Garmin entries on the same date, then checks if any start
-    within the MATCH_WINDOW_SECONDS of the Stryd timestamp.
+    Searches for any Running entry (regardless of source) on the same date.
+    This prevents duplicates when a Stryd standalone entry already exists.
+    When multiple matches exist, picks the one with closest distance.
     Returns the Notion page ID if found, None otherwise.
     """
     target_date = activity_time.date().isoformat()
@@ -312,7 +388,6 @@ def find_garmin_match(
         filter_obj={
             "and": [
                 {"property": "Date", "date": {"equals": target_date}},
-                {"property": "Source", "select": {"equals": "Garmin"}},
                 {"property": "Training Type", "select": {"equals": "Running"}},
             ]
         },
@@ -321,17 +396,28 @@ def find_garmin_match(
     if not results:
         return None
 
-    # If there's exactly one Garmin running entry on this date, match it
     if len(results) == 1:
         page_id: str = results[0]["id"]
         return page_id
 
-    # Multiple Garmin runs on same day — shouldn't be common, take the first
-    logger.warning(
-        "Multiple Garmin running entries on %s, matching first one", target_date
+    # Multiple running entries — pick closest distance match
+    stryd_km = stryd_distance_m / 1000.0 if stryd_distance_m > 0 else 0
+    best_page_id: str = results[0]["id"]
+    best_diff = float("inf")
+    for page in results:
+        dist_prop = page.get("properties", {}).get("Distance (km)", {})
+        page_dist = dist_prop.get("number") if dist_prop else None
+        if page_dist is not None and stryd_km > 0:
+            diff = abs(page_dist - stryd_km)
+            if diff < best_diff:
+                best_diff = diff
+                best_page_id = page["id"]
+    logger.info(
+        "Multiple running entries on %s, matched closest distance (diff=%.2fkm)",
+        target_date,
+        best_diff if best_diff != float("inf") else 0,
     )
-    first_id: str = results[0]["id"]
-    return first_id
+    return best_page_id
 
 
 # ---------------------------------------------------------------------------
@@ -345,14 +431,23 @@ def sync_activities(
     token: str,
     start_date: date,
     end_date: date,
+    user_id: str = "",
     debug: bool = False,
 ) -> tuple[int, int, int]:
     """Sync Stryd activities to Notion.
 
     Returns (updated, created, skipped) counts.
     """
-    activities = fetch_activities(stryd_session, token, start_date, end_date)
+    activities = fetch_activities(stryd_session, token, start_date, end_date, user_id)
     logger.info("Fetched %d activities from Stryd", len(activities))
+
+    # Deduplicate before syncing (Stryd often returns Garmin-synced + native entries)
+    deduped = deduplicate_activities(activities)
+    if len(deduped) < len(activities):
+        logger.info(
+            "Deduplicated %d → %d activities", len(activities), len(deduped)
+        )
+    activities = deduped
 
     if debug and activities:
         logger.info(
@@ -393,14 +488,15 @@ def sync_activities(
             skipped += 1
             continue
 
-        # Try to find a matching Garmin entry to enrich
-        garmin_page_id = find_garmin_match(notion, ts, db_id)
+        # Try to find an existing running entry to enrich
+        distance_m = float(activity.get("distance", 0) or 0)
+        match_page_id = find_existing_match(notion, ts, db_id, distance_m)
 
-        if garmin_page_id:
+        if match_page_id:
             update_props = build_stryd_update_properties(metrics, rpe, feel)
             if update_props:
-                notion.update_page(garmin_page_id, update_props)
-                logger.info("Updated Garmin entry for %s with Stryd data", ts.date())
+                notion.update_page(match_page_id, update_props)
+                logger.info("Updated existing entry for %s with Stryd data", ts.date())
                 updated += 1
             else:
                 logger.info("No Stryd metrics to add for %s", ts.date())
@@ -470,7 +566,7 @@ def main() -> None:
     stryd_session = _build_stryd_session()
 
     logger.info("Authenticating with Stryd...")
-    token = authenticate(stryd_session, email, password)
+    token, user_id = authenticate(stryd_session, email, password)
     logger.info("Stryd authenticated")
 
     end_date = date.today() + timedelta(days=1)  # include today
@@ -483,7 +579,8 @@ def main() -> None:
 
     logger.info("Syncing Stryd data from %s to %s", start_date, end_date)
     updated, created, skipped = sync_activities(
-        notion, stryd_session, token, start_date, end_date, debug=args.debug
+        notion, stryd_session, token, start_date, end_date,
+        user_id=user_id, debug=args.debug,
     )
     logger.info(
         "Done: %d updated, %d created, %d skipped", updated, created, skipped
