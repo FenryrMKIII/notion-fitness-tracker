@@ -61,6 +61,12 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Restore Garmin tokens
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: .garmin_tokens
+          key: garmin-tokens
+
       - name: Run Garmin sync
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
