@@ -112,12 +112,21 @@ Syncs gym workouts from Hevy API. Flags: `--full` (all pages), `--since DATE`.
 
 Syncs activities and health data from Garmin Connect. Flags: `--date DATE`, `--days N`.
 - Uses `garminconnect` library for authentication and API calls
+- **Token caching**: `get_garmin_client()` loads cached OAuth tokens from `.garmin_tokens/` before attempting SSO login. Garmin rate-limits SSO from cloud IPs (429 errors), so token caching is required for CI. Tokens are re-saved after each successful session resume to persist refreshed access tokens. OAuth1 token lasts ~1 year.
 - **Activities** → Training Sessions DB (maps activity types via `GARMIN_TYPE_MAPPING`)
 - **Health data** → Health Status Log DB (sleep, steps, RHR, body battery)
 - 4 Garmin endpoints fetched independently with per-endpoint error handling:
   `get_sleep_data()`, `get_steps_data()`, `get_heart_rates()`, `get_body_battery()`
 - Multi-day mode: iterates date range, catches per-day errors, reports failures at end
 - Skips health sync gracefully if `NOTION_HEALTH_DB_ID` is not set
+
+### `scripts/refresh_garmin_tokens.py`
+
+Generates Garmin OAuth tokens locally and optionally uploads them to GitHub Actions secrets. Flags: `--upload`.
+- Authenticates with Garmin using `GARMIN_EMAIL`/`GARMIN_PASSWORD` from `.env`
+- Saves tokens to `.garmin_tokens/` (gitignored)
+- `--upload`: base64-encodes tokens and sets the `GARMIN_TOKENS` secret in the `prod` environment via `gh` CLI
+- Run this when the cached tokens expire and CI starts failing with 429 errors
 
 ### `scripts/stryd_sync.py`
 
@@ -186,6 +195,7 @@ GitHub Pages site with interactive Chart.js charts.
 | `HEVY_API_KEY` | hevy_sync | Yes |
 | `GARMIN_EMAIL` | garmin_sync | Yes |
 | `GARMIN_PASSWORD` | garmin_sync | Yes |
+| `GARMIN_TOKENS` | garmin_sync (CI only) | Yes (base64-encoded OAuth tokens, seeded by `refresh_garmin_tokens.py`) |
 | `STRYD_EMAIL` | stryd_sync | Yes |
 | `STRYD_PASSWORD` | stryd_sync | Yes |
 

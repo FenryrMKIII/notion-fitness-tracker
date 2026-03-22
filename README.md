@@ -69,11 +69,29 @@ Add these secrets in your repo's **Settings > Environments > prod**:
 | `HEVY_API_KEY` | Hevy API key (from Hevy Settings > API) |
 | `GARMIN_EMAIL` | Garmin Connect email |
 | `GARMIN_PASSWORD` | Garmin Connect password |
+| `GARMIN_TOKENS` | Base64-encoded OAuth tokens (see below) |
 | `STRYD_EMAIL` | Stryd account email |
 | `STRYD_PASSWORD` | Stryd account password |
 
-### 4. Set up Stryd (optional)
+### 4. Set up Garmin token caching
 
+Garmin rate-limits SSO logins from cloud IPs (GitHub Actions runners), causing 429 errors. To avoid this, OAuth tokens are cached between workflow runs. The tokens need to be generated locally and uploaded as a GitHub secret to seed the initial cache.
+
+```bash
+# Login locally and upload tokens to GitHub in one step
+uv run python -m scripts.refresh_garmin_tokens --upload
+```
+
+The OAuth1 token lasts ~1 year. Each workflow run refreshes and re-caches the tokens automatically. If the tokens eventually expire and the workflow starts failing with 429 errors, re-run the command above.
+
+You can also do it in two steps (generate locally, then upload manually):
+
+```bash
+uv run python -m scripts.refresh_garmin_tokens
+tar -czf - -C .garmin_tokens . | base64 | tr -d '\n' | gh secret set GARMIN_TOKENS -R FenryrMKIII/notion-fitness-tracker --env prod
+```
+
+### 5. Set up Stryd (optional)
 The Stryd sync enriches Garmin running entries with power-based metrics (watts, RSS, ground contact, cadence, etc.) and can store RPE and feeling data from your Stryd Post Run Reports.
 
 No additional setup needed beyond the GitHub secrets above. The combined Running Sync workflow runs daily at 7 AM UTC — Garmin sync runs first, then Stryd sync matches and enriches the Garmin entries with power data.
@@ -84,7 +102,7 @@ To backfill historical data:
 uv run python -m scripts.stryd_sync --full
 ```
 
-### 5. Set up Strava (optional)
+### 6. Set up Strava (optional)
 
 See [remaining.md](remaining.md) for the step-by-step Zapier automation guide.
 
@@ -177,6 +195,7 @@ scripts/
   generate_charts_data.py  # Generates site/data.json for the dashboard
   update_dashboard.py      # Shared pure functions (retired as standalone script)
   cleanup_duplicates.py    # One-time duplicate Running entry cleanup with power merge
+  refresh_garmin_tokens.py # Refresh and upload Garmin OAuth tokens for CI
 site/
   index.html              # Dashboard: 8 sections, 18 charts + activity calendar
   app.js                  # Chart.js rendering, time range filtering
