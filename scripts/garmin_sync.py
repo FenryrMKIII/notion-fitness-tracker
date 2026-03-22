@@ -4,9 +4,7 @@
 import argparse
 import logging
 import os
-import time
 from datetime import date, timedelta
-from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -42,18 +40,8 @@ def garmin_type_to_training_type(activity_type: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-GARMIN_TOKEN_DIR = os.environ.get("GARMIN_TOKEN_DIR", ".garmin_tokens")
-
-LOGIN_MAX_RETRIES = 3
-LOGIN_BACKOFF_BASE = 30  # seconds
-
-
 def get_garmin_client() -> Garmin:
-    """Authenticate with Garmin Connect using cached tokens or email/password.
-
-    Token caching avoids repeated SSO logins which trigger Garmin's 429 rate
-    limits, especially from shared cloud IPs (GitHub Actions runners).
-    """
+    """Authenticate with Garmin Connect.  Raises ConfigurationError on missing creds."""
     email = os.environ.get("GARMIN_EMAIL")
     password = os.environ.get("GARMIN_PASSWORD")
     if not email or not password:
@@ -61,43 +49,9 @@ def get_garmin_client() -> Garmin:
             "GARMIN_EMAIL and GARMIN_PASSWORD environment variables must be set"
         )
 
-    token_dir = Path(GARMIN_TOKEN_DIR)
     client = Garmin(email, password)
-
-    # Try resuming from cached tokens first
-    if token_dir.is_dir():
-        try:
-            client.garth.load(str(token_dir))
-            client.display_name = client.get_full_name()
-            logger.info("Resumed Garmin session from cached tokens")
-            return client
-        except Exception as exc:
-            logger.warning("Cached tokens invalid, falling back to login: %s", exc)
-
-    # Fresh login with retry + exponential backoff for 429s
-    last_exc: Exception | None = None
-    for attempt in range(1, LOGIN_MAX_RETRIES + 1):
-        try:
-            client.login()
-            # Save tokens for future runs
-            token_dir.mkdir(parents=True, exist_ok=True)
-            client.garth.dump(str(token_dir))
-            logger.info("Garmin login succeeded (attempt %d), tokens cached", attempt)
-            return client
-        except Exception as exc:
-            last_exc = exc
-            if attempt < LOGIN_MAX_RETRIES:
-                wait = LOGIN_BACKOFF_BASE * (2 ** (attempt - 1))
-                logger.warning(
-                    "Garmin login attempt %d/%d failed: %s — retrying in %ds",
-                    attempt,
-                    LOGIN_MAX_RETRIES,
-                    exc,
-                    wait,
-                )
-                time.sleep(wait)
-
-    raise ConfigurationError(f"Garmin login failed after {LOGIN_MAX_RETRIES} attempts: {last_exc}")
+    client.login()
+    return client
 
 
 # ---------------------------------------------------------------------------
