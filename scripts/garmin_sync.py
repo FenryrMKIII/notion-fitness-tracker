@@ -72,7 +72,10 @@ def get_garmin_client() -> Garmin:
             logger.info("Resumed Garmin session from cached tokens")
             return client
         except Exception as exc:
-            logger.warning("Cached tokens invalid, falling back to login: %s", exc)
+            logger.warning(
+                "Cached tokens invalid, falling back to login: %s",
+                type(exc).__name__,
+            )
 
     # Fresh login — will fail on cloud IPs if rate-limited
     client.login()
