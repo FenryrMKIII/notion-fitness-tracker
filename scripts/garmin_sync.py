@@ -5,6 +5,7 @@ import argparse
 import logging
 import os
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -40,8 +41,17 @@ def garmin_type_to_training_type(activity_type: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+GARMIN_TOKEN_DIR = os.environ.get("GARMIN_TOKEN_DIR", ".garmin_tokens")
+
+
 def get_garmin_client() -> Garmin:
-    """Authenticate with Garmin Connect.  Raises ConfigurationError on missing creds."""
+    """Authenticate with Garmin Connect using cached tokens or email/password.
+
+    Garmin aggressively rate-limits SSO logins from cloud IPs (GitHub Actions).
+    Token caching lets us skip SSO entirely on subsequent runs — garth
+    auto-refreshes the access token using the stored OAuth1 token (~1 year
+    lifetime).
+    """
     email = os.environ.get("GARMIN_EMAIL")
     password = os.environ.get("GARMIN_PASSWORD")
     if not email or not password:
@@ -49,8 +59,26 @@ def get_garmin_client() -> Garmin:
             "GARMIN_EMAIL and GARMIN_PASSWORD environment variables must be set"
         )
 
+    token_dir = Path(GARMIN_TOKEN_DIR)
     client = Garmin(email, password)
+
+    # Try resuming from cached tokens first
+    if token_dir.is_dir():
+        try:
+            client.garth.load(str(token_dir))
+            client.display_name = client.get_full_name()
+            # Re-save tokens so refreshed access tokens are persisted
+            client.garth.dump(str(token_dir))
+            logger.info("Resumed Garmin session from cached tokens")
+            return client
+        except Exception as exc:
+            logger.warning("Cached tokens invalid, falling back to login: %s", exc)
+
+    # Fresh login — will fail on cloud IPs if rate-limited
     client.login()
+    token_dir.mkdir(parents=True, exist_ok=True)
+    client.garth.dump(str(token_dir))
+    logger.info("Garmin login succeeded, tokens cached to %s", token_dir)
     return client
 
 

@@ -75,6 +75,27 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Restore Garmin tokens from cache
+        id: garmin-cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: .garmin_tokens
+          key: garmin-tokens-${{ github.run_id }}
+          restore-keys: garmin-tokens-
+
+      - name: Seed Garmin tokens from secret
+        if: steps.garmin-cache.outputs.cache-hit != 'true'
+        env:
+          GARMIN_TOKENS: ${{ secrets.GARMIN_TOKENS }}
+        run: |
+          if [ -n "$GARMIN_TOKENS" ]; then
+            mkdir -p .garmin_tokens
+            echo "$GARMIN_TOKENS" | base64 -d | tar -xzf - -C .garmin_tokens
+            echo "Restored Garmin tokens from secret"
+          else
+            echo "No cached tokens or GARMIN_TOKENS secret — will attempt fresh login"
+          fi
+
       - name: Run Garmin sync
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}

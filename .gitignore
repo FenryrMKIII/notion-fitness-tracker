@@ -2,6 +2,9 @@
 .env
 .env.local
 
+# Garmin OAuth tokens
+.garmin_tokens/
+
 # Python
 __pycache__/
 .venv/
